@@ -6,6 +6,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useThemeContext } from '../utils/ThemeContext';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { formatBytesToGB, createFolder, createFile, renameItem, deleteItem, searchItems } from '../utils/FileManagement';
 
 type RootStackParamList = {
   Home: undefined;
@@ -19,9 +20,42 @@ interface FileItem {
   name: string;
   path: string;
   isFile: boolean;
+  size?: number; // Bytes
+  modificationTime?: number; // Unix timestamp
+  itemCount?: number; // For directories
 }
 
 const { width } = Dimensions.get('window');
+
+const formatDate = (timestamp: number) => {
+  const date = new Date(timestamp * 1000); // Convert Unix timestamp to milliseconds
+  const options: Intl.DateTimeFormatOptions = {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  };
+  return date.toLocaleString('en-US', options);
+};
+
+const getFolderIcon = (folderName: string) => {
+  switch (folderName.toLowerCase()) {
+    case 'android': return 'android';
+    case 'documents': return 'description';
+    case 'download': return 'file-download';
+    case 'movies': return 'movie';
+    case 'music': return 'music-note';
+    case 'pictures': return 'image';
+    case 'alarms': return 'alarm';
+    case 'audiobooks': return 'book';
+    case 'dcim': return 'camera-alt';
+    case 'downloadhelper': return 'cloud-download';
+    case 'notifications': return 'notifications';
+    default: return 'folder';
+  }
+};
 
 const FileExplorer: React.FC = () => {
   const route = useRoute<FileExplorerRouteProp>();
@@ -36,24 +70,6 @@ const FileExplorer: React.FC = () => {
   const scrollY = new Animated.Value(0);
   const navigation = useNavigation<NavigationProp>();
 
-  const headerHeight = scrollY.interpolate({
-    inputRange: [0, 100],
-    outputRange: [120, 80],
-    extrapolate: 'clamp',
-  });
-
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 100],
-    outputRange: [1, 0.9],
-    extrapolate: 'clamp',
-  });
-
-  const titleScale = scrollY.interpolate({
-    inputRange: [0, 100],
-    outputRange: [1, 0.8],
-    extrapolate: 'clamp',
-  });
-
   const toggleTheme = () => {
     setThemeType(themeType === 'dark' ? 'light' : 'dark');
   };
@@ -65,22 +81,50 @@ const FileExplorer: React.FC = () => {
   const loadFiles = async (path: string) => {
     setLoading(true);
     try {
-      console.log('Loading files from path:', path);
       const items = await FileSystem.readDirectoryAsync(path);
-      console.log('Files loaded:', items.length);
-      
+
       const fileItems = await Promise.all(
         items.map(async (name) => {
-          const fullPath = `${path}${name}`;
+          const fullPath = `${path.endsWith('/') ? path : path + '/'}${name}`;
           const info = await FileSystem.getInfoAsync(fullPath);
+          let itemCount = undefined;
+          let size = undefined;
+          let modificationTime = undefined;
+
+          if (info.exists) {
+            if (info.isDirectory) {
+              try {
+                const subItems = await FileSystem.readDirectoryAsync(fullPath);
+                itemCount = subItems.length;
+              } catch (subDirError) {
+                console.warn(`Could not read subdirectory ${fullPath}:`, subDirError);
+                itemCount = 0; // Assume 0 if not readable due to permissions etc.
+              }
+            } else { // It's a file
+              size = info.size;
+              modificationTime = info.modificationTime;
+            }
+          }
+
           return {
             name,
             path: fullPath,
             isFile: info.exists && !info.isDirectory,
+            size,
+            modificationTime,
+            itemCount,
           };
         })
       );
       
+      // Sort folders first, then files, then alphabetically
+      fileItems.sort((a, b) => {
+        if (a.isFile !== b.isFile) {
+          return a.isFile ? 1 : -1; // Folders come before files
+        }
+        return a.name.localeCompare(b.name); // Sort alphabetically
+      });
+
       setFiles(fileItems);
     } catch (error) {
       console.error('Error loading files:', error);
@@ -95,6 +139,19 @@ const FileExplorer: React.FC = () => {
     if (!item.isFile) {
       setHistory([...history, currentPath]);
       setCurrentPath(item.path);
+      navigation.setOptions({ title: item.name }); // Update header title dynamically
+    } else {
+      // Handle file press - open file or show options
+      Alert.alert(
+        `Open ${item.name}`,
+        'What would you like to do with this file?',
+        [
+          { text: 'Open', onPress: () => console.log('Open file', item.name) },
+          { text: 'Share', onPress: () => console.log('Share file', item.name) },
+          { text: 'Delete', onPress: () => handleDeleteItem(item) },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
     }
   };
 
@@ -103,146 +160,241 @@ const FileExplorer: React.FC = () => {
       const prev = history[history.length - 1];
       setHistory(history.slice(0, -1));
       setCurrentPath(prev);
+      // Update header title based on the new path
+      const prevTitle = prev.split('/').pop() || 'Root';
+      navigation.setOptions({ title: prevTitle });
+    } else {
+      navigation.goBack(); // If no history, go back to the previous screen (Home)
     }
   };
 
-  const getFileIcon = (isFile: boolean) => {
-    return isFile ? 'insert-drive-file' : 'folder';
-  };
-
   const handleNewFolder = () => {
-    // TODO: Implement new folder creation
-    console.log('Create new folder');
+    Alert.prompt(
+      'Create New Folder',
+      'Enter folder name:',
+      async (folderName) => {
+        if (folderName) {
+          try {
+            await createFolder(currentPath, folderName);
+            loadFiles(currentPath); // Reload files after creation
+          } catch (error: any) {
+            Alert.alert('Error', `Failed to create folder: ${error.message}`);
+          }
+        }
+      },
+      'plain-text'
+    );
   };
 
-  const handleUpload = () => {
-    // TODO: Implement file upload
-    console.log('Upload file');
+  const handleNewFile = () => {
+    Alert.prompt(
+      'Create New File',
+      'Enter file name:',
+      async (fileName) => {
+        if (fileName) {
+          try {
+            await createFile(currentPath, fileName);
+            loadFiles(currentPath); // Reload files after creation
+          } catch (error: any) {
+            Alert.alert('Error', `Failed to create file: ${error.message}`);
+          }
+        }
+      },
+      'plain-text'
+    );
+  };
+
+  const handleRenameItem = (item: FileItem) => {
+    Alert.prompt(
+      `Rename ${item.name}`,
+      'Enter new name:',
+      async (newName) => {
+        if (newName && newName !== item.name) {
+          const newPath = `${item.path.substring(0, item.path.lastIndexOf('/') + 1)}${newName}`;
+          try {
+            await renameItem(item.path, newPath);
+            loadFiles(currentPath); // Reload files after rename
+          } catch (error: any) {
+            Alert.alert('Error', `Failed to rename: ${error.message}`);
+          }
+        }
+      },
+      'plain-text',
+      item.name
+    );
+  };
+
+  const handleDeleteItem = (item: FileItem) => {
+    Alert.alert(
+      'Confirm Delete',
+      `Are you sure you want to delete ${item.name}? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          onPress: async () => {
+            try {
+              await deleteItem(item.path);
+              loadFiles(currentPath); // Reload files after deletion
+            } catch (error: any) {
+              Alert.alert('Error', `Failed to delete: ${error.message}`);
+            }
+          },
+          style: 'destructive',
+        },
+      ]
+    );
   };
 
   const handleSearch = () => {
-    // TODO: Implement search functionality
-    console.log('Search files');
+    Alert.prompt(
+      'Search Files/Folders',
+      'Enter search query:',
+      async (query) => {
+        if (query) {
+          try {
+            const results = await searchItems(currentPath, query);
+            if (results.length > 0) {
+              Alert.alert('Search Results', `Found ${results.length} items:\n\n${results.join('\n')}`);
+            } else {
+              Alert.alert('Search Results', 'No items found matching your query.');
+            }
+            // For a more integrated search, you'd filter the 'files' state directly
+            // For simplicity, we are just showing an alert with results
+          } catch (error: any) {
+            Alert.alert('Error', `Failed to search: ${error.message}`);
+          }
+        }
+      },
+      'plain-text'
+    );
+  };
+
+  const handleMoreOptions = () => {
+    Alert.alert(
+      'Options',
+      'Choose an action:',
+      [
+        { text: 'Create New Folder', onPress: handleNewFolder },
+        { text: 'Create New File', onPress: handleNewFile },
+        { text: 'Copy', onPress: () => Alert.alert('Copy', 'Copy functionality not yet implemented.') },
+        { text: 'Move', onPress: () => Alert.alert('Move', 'Move functionality not yet implemented.') },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
   };
 
   const renderHeader = () => (
     <View style={[
       styles.header,
-      {
-        backgroundColor: theme.headerBackground,
-        paddingTop: insets.top,
-        borderBottomColor: theme.border,
-      }
+      { paddingTop: insets.top, backgroundColor: '#000' } // Force dark background
     ]}>
-      <View style={styles.headerTop}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backButton}
-        >
-          <MaterialIcons name="arrow-back" size={24} color={theme.text} />
+      <View style={styles.headerTopBar}>
+        <TouchableOpacity onPress={goBack} style={styles.headerIconBtn}>
+          <MaterialIcons name="arrow-back-ios" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: theme.text }]}>
-          {route.params?.title || currentPath.split('/').pop() || 'Root'}
-        </Text>
-        <TouchableOpacity
-          onPress={toggleTheme}
-          style={styles.themeButton}
-        >
-          <MaterialIcons
-            name={themeType === 'dark' ? 'light-mode' : 'dark-mode'}
-            size={24}
-            color={theme.text}
-          />
-        </TouchableOpacity>
+        <View style={styles.currentPathContainer}>
+          <MaterialIcons name="home" size={20} color="#6EC1E4" style={{ marginRight: 5 }} />
+          <Text style={styles.currentPathText}>
+            {route.params?.title || currentPath.split('/').filter(Boolean).pop() || 'Internal storage'}
+          </Text>
+        </View>
+        <View style={styles.headerRightIcons}>
+          <TouchableOpacity onPress={handleSearch} style={styles.headerIconBtn}>
+            <MaterialIcons name="search" size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleMoreOptions} style={styles.headerIconBtn}>
+            <MaterialIcons name="more-vert" size={24} color="#fff" />
+          </TouchableOpacity>
+        </View>
       </View>
-      <View style={styles.headerBottom}>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('Home')}
-          style={styles.homeButton}
-        >
-          <MaterialIcons name="home" size={24} color={theme.text} />
+    </View>
+  );
+
+  const renderSortFilterBar = () => (
+    <View style={styles.sortFilterBar}>
+      <TouchableOpacity style={styles.sortFilterButton}>
+        <Text style={styles.sortFilterText}></Text>
+        <MaterialIcons name="arrow-drop-down" size={20} color="#fff" />
+      </TouchableOpacity>
+      <View style={styles.sortOptions}>
+        <TouchableOpacity style={styles.sortFilterButton}>
+          <Text style={styles.sortFilterText}>Name</Text>
+          <MaterialIcons name="arrow-upward" size={20} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={handleNewFolder}
-          style={styles.actionButton}
-        >
-          <MaterialIcons name="create-new-folder" size={24} color={theme.text} />
+        <TouchableOpacity style={styles.sortFilterButton}>
+          <MaterialIcons name="sort" size={20} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity
-          onPress={handleUpload}
-          style={styles.actionButton}
-        >
-          <MaterialIcons name="upload-file" size={24} color={theme.text} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={handleSearch}
-          style={styles.actionButton}
-        >
-          <MaterialIcons name="search" size={24} color={theme.text} />
+        <TouchableOpacity style={styles.sortFilterButton}>
+          <MaterialIcons name="grid-view" size={20} color="#fff" />
         </TouchableOpacity>
       </View>
     </View>
   );
 
   const renderItem = ({ item }: { item: FileItem }) => (
-    <TouchableOpacity 
-      onPress={() => openFolder(item)} 
-      style={[
-        styles.item,
-        { 
-          backgroundColor: theme.itemBackground,
-          borderBottomColor: theme.itemBorder,
-          elevation: theme.elevation / 2,
-          shadowColor: theme.shadowColor,
-          shadowOpacity: theme.shadowOpacity / 2,
-          shadowRadius: theme.shadowRadius / 2,
-          shadowOffset: theme.shadowOffset,
-        }
-      ]}
+    <TouchableOpacity
+      onPress={() => openFolder(item)}
+      onLongPress={() => handleLongPressItem(item)} // Add long press handler
+      style={styles.itemContainer}
     >
-      <MaterialIcons 
-        name={getFileIcon(item.isFile)} 
-        size={24} 
-        color={theme.icon} 
-        style={styles.icon}
-      />
+      <View style={styles.itemIconContainer}>
+        {item.isFile ? (
+          // For special patterned files, you'd use a custom Image component if assets are available
+          // For now, using a generic file icon
+          <MaterialIcons name="insert-drive-file" size={28} color="#ccc" />
+        ) : (
+          <MaterialIcons name={getFolderIcon(item.name)} size={28} color="#6EC1E4" />
+        )}
+      </View>
       <View style={styles.itemContent}>
-        <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>
-          {item.name}
-        </Text>
-        <Text style={[styles.itemType, { color: theme.secondaryText }]}>
-          {item.isFile ? 'File' : 'Folder'}
+        <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
+        <Text style={styles.itemDetails}>
+          {item.modificationTime ? formatDate(item.modificationTime) : ''}
+          {!item.isFile && item.itemCount !== undefined && ` • ${item.itemCount} items`}
+          {item.isFile && item.size !== undefined && ` • ${formatBytesToGB(item.size)}`}
         </Text>
       </View>
       {!item.isFile && (
-        <MaterialIcons name="chevron-right" size={24} color={theme.secondaryText} />
+        <MaterialIcons name="chevron-right" size={24} color="#555" />
       )}
     </TouchableOpacity>
   );
 
+  // New function to handle long press on items
+  const handleLongPressItem = (item: FileItem) => {
+    Alert.alert(
+      `Actions for ${item.name}`,
+      'Choose an action:',
+      [
+        { text: 'Rename', onPress: () => handleRenameItem(item) },
+        { text: 'Delete', onPress: () => handleDeleteItem(item) },
+        { text: 'Copy', onPress: () => Alert.alert('Copy', 'Copy functionality not yet implemented.') },
+        { text: 'Move', onPress: () => Alert.alert('Move', 'Move functionality not yet implemented.') },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
+
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
+    <View style={[styles.container, { backgroundColor: '#000' }]}>
       {renderHeader()}
+      {renderSortFilterBar()}
       {loading ? (
-        <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
+        <ActivityIndicator size="large" color="#6EC1E4" style={styles.loader} />
       ) : (
-        <Animated.FlatList
+        <FlatList
           data={files}
-          keyExtractor={item => item.path}
+          keyExtractor={(item) => item.path}
           renderItem={renderItem}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <MaterialIcons name="folder-open" size={48} color={theme.emptyText} />
-              <Text style={[styles.emptyText, { color: theme.emptyText }]}>
+              <MaterialIcons name="folder-open" size={48} color="#555" />
+              <Text style={styles.emptyText}>
                 No files found
               </Text>
             </View>
           }
-          onScroll={Animated.event(
-            [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-            { useNativeDriver: false }
-          )}
-          scrollEventThrottle={16}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
         />
@@ -254,73 +406,93 @@ const FileExplorer: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000',
   },
   header: {
     width: '100%',
-    justifyContent: 'center',
+    backgroundColor: '#000',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#333',
+    paddingBottom: 10,
+  },
+  headerTopBar: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 15,
+    height: 56, // Fixed height for header top bar
   },
-  headerTop: {
+  headerIconBtn: {
+    padding: 5,
+  },
+  currentPathContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  backButton: {
-    padding: 8,
-  },
-  homeButton: {
-    padding: 8,
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
     flex: 1,
-    textAlign: 'center',
+    marginLeft: 10, // Adjust spacing from back button
   },
-  themeButton: {
-    padding: 8,
-    marginLeft: 10,
-  },
-  headerBottom: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-  },
-  actionButton: {
-    padding: 8,
-  },
-  path: {
-    fontSize: 12,
-    opacity: 0.8,
-    marginTop: 5,
-    width: '100%',
-    textAlign: 'center',
-  },
-  item: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    marginHorizontal: 16,
-    borderRadius: 8,
-    marginVertical: 4,
-  },
-  itemContent: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  icon: {
-    marginRight: 8,
-  },
-  name: {
+  currentPathText: {
+    color: '#6EC1E4',
     fontSize: 16,
     fontWeight: '500',
   },
-  itemType: {
+  headerRightIcons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sortFilterBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    backgroundColor: '#000',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#333',
+  },
+  sortFilterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+  },
+  sortFilterText: {
+    color: '#fff',
+    fontSize: 14,
+    marginRight: 5,
+  },
+  sortOptions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  itemContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    backgroundColor: '#111',
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#222',
+  },
+  itemIconContainer: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+    borderRadius: 20,
+    backgroundColor: '#333', // Placeholder background for icon circle
+  },
+  itemContent: {
+    flex: 1,
+  },
+  itemName: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  itemDetails: {
+    color: '#aaa',
     fontSize: 12,
     marginTop: 2,
   },
@@ -332,6 +504,7 @@ const styles = StyleSheet.create({
     marginTop: 40,
   },
   emptyText: {
+    color: '#555',
     fontSize: 16,
     marginTop: 12,
   },
@@ -339,8 +512,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   listContent: {
-    paddingTop: 16,
-    paddingBottom: 32,
+    paddingBottom: 20,
   },
 });
 

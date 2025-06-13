@@ -1,9 +1,8 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, Image } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, Alert } from 'react-native';
+import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useThemeContext } from '../utils/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as FileSystem from 'expo-file-system';
@@ -17,219 +16,147 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const { width } = Dimensions.get('window');
 
-const QuickAccessCard = ({ icon, title, subtitle, onPress, theme, gradientColors }: any) => (
-  <TouchableOpacity
-    onPress={onPress}
-    style={[
-      styles.quickAccessCard,
-      {
-        backgroundColor: theme.itemBackground,
-        shadowColor: theme.shadowColor,
-        shadowOpacity: theme.shadowOpacity,
-        shadowRadius: theme.shadowRadius,
-        shadowOffset: theme.shadowOffset,
-        elevation: theme.elevation,
-      }
-    ]}
-  >
-    <LinearGradient
-      colors={gradientColors}
-      style={styles.iconContainer}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-    >
-      <MaterialIcons name={icon} size={32} color="#fff" />
-    </LinearGradient>
-    <View style={styles.cardContent}>
-      <Text style={[styles.cardTitle, { color: theme.text }]}>{title}</Text>
-      <Text style={[styles.cardSubtitle, { color: theme.secondaryText }]}>{subtitle}</Text>
-    </View>
-  </TouchableOpacity>
-);
+// Helper to format bytes to GB
+const formatBytesToGB = (bytes: number) => {
+  if (bytes === 0) return '0 GB';
+  const gb = bytes / (1024 * 1024 * 1024);
+  return `${gb.toFixed(2)} GB`;
+};
 
-const StorageCard = ({ theme }: { theme: any }) => (
-  <LinearGradient
-    colors={[theme.primary, theme.primary + '80']}
-    style={styles.storageCard}
-    start={{ x: 0, y: 0 }}
-    end={{ x: 1, y: 1 }}
-  >
-    <View style={styles.storageHeader}>
-      <MaterialIcons name="storage" size={24} color="#fff" />
-      <Text style={styles.storageTitle}>Storage Overview</Text>
-    </View>
-    <View style={styles.storageStats}>
-      <View style={styles.statItem}>
-        <Text style={styles.statValue}>1.2 GB</Text>
-        <Text style={styles.statLabel}>Used</Text>
-      </View>
-      <View style={styles.statDivider} />
-      <View style={styles.statItem}>
-        <Text style={styles.statValue}>4.8 GB</Text>
-        <Text style={styles.statLabel}>Free</Text>
-      </View>
-      <View style={styles.statDivider} />
-      <View style={styles.statItem}>
-        <Text style={styles.statValue}>6 GB</Text>
-        <Text style={styles.statLabel}>Total</Text>
-      </View>
-    </View>
-  </LinearGradient>
-);
-
-const HomeScreen: React.FC = () => {
+const HomeScreen = () => {
   const { theme } = useThemeContext();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp>();
 
-  const getDocumentsPath = async () => {
-    try {
-      const documentsDir = FileSystem.documentDirectory;
-      if (!documentsDir) {
-        throw new Error('Document directory not available');
-      }
-      return documentsDir;
-    } catch (error) {
-      console.error('Error getting documents path:', error);
-      return FileSystem.documentDirectory || '';
-    }
-  };
+  const [internalStorage, setInternalStorage] = useState('Loading...');
+  const [sdCardStorage, setSdCardStorage] = useState('Not inserted');
 
-  const getPicturesPath = async () => {
-    try {
-      const documentsDir = FileSystem.documentDirectory;
-      if (!documentsDir) {
-        throw new Error('Document directory not available');
-      }
-      const picturesDir = documentsDir + 'Pictures/';
-      const dirInfo = await FileSystem.getInfoAsync(picturesDir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(picturesDir, { intermediates: true });
-      }
-      return picturesDir;
-    } catch (error) {
-      console.error('Error getting pictures path:', error);
-      return (FileSystem.documentDirectory || '') + 'Pictures/';
-    }
-  };
+  useEffect(() => {
+    const getStorageInfo = async () => {
+      try {
+        const freeDiskStorage = await FileSystem.getFreeDiskStorageAsync();
+        const totalDiskCapacity = await FileSystem.getTotalDiskCapacityAsync();
 
-  const getMusicPath = async () => {
-    try {
-      const documentsDir = FileSystem.documentDirectory;
-      if (!documentsDir) {
-        throw new Error('Document directory not available');
+        setInternalStorage(
+          `${formatBytesToGB(totalDiskCapacity - freeDiskStorage)} / ${formatBytesToGB(totalDiskCapacity)}`
+        );
+      } catch (error) {
+        console.error('Error getting storage info:', error);
+        setInternalStorage('Error');
       }
-      const musicDir = documentsDir + 'Music/';
-      const dirInfo = await FileSystem.getInfoAsync(musicDir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(musicDir, { intermediates: true });
-      }
-      return musicDir;
-    } catch (error) {
-      console.error('Error getting music path:', error);
-      return (FileSystem.documentDirectory || '') + 'Music/';
-    }
-  };
+    };
 
-  const getVideosPath = async () => {
-    try {
-      const documentsDir = FileSystem.documentDirectory;
-      if (!documentsDir) {
-        throw new Error('Document directory not available');
-      }
-      const videosDir = documentsDir + 'Videos/';
-      const dirInfo = await FileSystem.getInfoAsync(videosDir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(videosDir, { intermediates: true });
-      }
-      return videosDir;
-    } catch (error) {
-      console.error('Error getting videos path:', error);
-      return (FileSystem.documentDirectory || '') + 'Videos/';
-    }
-  };
+    getStorageInfo();
+  }, []);
 
-  const quickAccessItems = [
+  const STORAGE_DATA = [
     {
-      icon: 'folder',
-      title: 'Documents',
-      subtitle: 'Access your documents',
-      onPress: async () => {
-        const path = await getDocumentsPath();
-        navigation.navigate('FileExplorer', { initialPath: path, title: 'Documents' });
-      },
-      gradientColors: ['#4CAF50', '#45a049'],
+      icon: <View><MaterialIcons name="smartphone" size={22} color="#6EC1E4" /></View>, label: 'Internal storage', value: internalStorage,
     },
     {
-      icon: 'image',
-      title: 'Pictures',
-      subtitle: 'View your images',
-      onPress: async () => {
-        const path = await getPicturesPath();
-        navigation.navigate('FileExplorer', { initialPath: path, title: 'Pictures' });
-      },
-      gradientColors: ['#2196F3', '#1e88e5'],
+      icon: <View><MaterialIcons name="sd-card" size={22} color="#A084E8" /></View>, label: 'SD card', value: sdCardStorage,
+    },
+  ];
+
+  // Function to get common directories, creating them if they don't exist
+  const getCommonDirectoryPath = async (subDir: string) => {
+    const baseDir = FileSystem.documentDirectory;
+    if (!baseDir) {
+      throw new Error('Document directory not available');
+    }
+    const fullPath = `${baseDir}${subDir}/`;
+    const dirInfo = await FileSystem.getInfoAsync(fullPath);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(fullPath, { intermediates: true });
+    }
+    return fullPath;
+  };
+
+  const CATEGORY_DATA = [
+    {
+      icon: <View><MaterialIcons name="image" size={28} color="#6EC1E4" /></View>, label: 'Images',
+      onPress: async () => navigation.navigate('FileExplorer', { initialPath: await getCommonDirectoryPath('Pictures'), title: 'Images' }),
     },
     {
-      icon: 'music-note',
-      title: 'Music',
-      subtitle: 'Listen to your music',
-      onPress: async () => {
-        const path = await getMusicPath();
-        navigation.navigate('FileExplorer', { initialPath: path, title: 'Music' });
-      },
-      gradientColors: ['#9C27B0', '#8e24aa'],
+      icon: <View><MaterialIcons name="videocam" size={28} color="#A084E8" /></View>, label: 'Videos',
+      onPress: async () => navigation.navigate('FileExplorer', { initialPath: await getCommonDirectoryPath('Videos'), title: 'Videos' }),
     },
     {
-      icon: 'movie',
-      title: 'Videos',
-      subtitle: 'Watch your videos',
-      onPress: async () => {
-        const path = await getVideosPath();
-        navigation.navigate('FileExplorer', { initialPath: path, title: 'Videos' });
-      },
-      gradientColors: ['#FF5722', '#f4511e'],
+      icon: <View><MaterialIcons name="music-note" size={28} color="#F67280" /></View>, label: 'Audio files',
+      onPress: async () => navigation.navigate('FileExplorer', { initialPath: await getCommonDirectoryPath('Music'), title: 'Audio files' }),
     },
     {
-      icon: 'sd-card',
-      title: 'SD-Card',
-      subtitle: '......',
-      onPress: async () => {
-        const path = await getVideosPath();
-        navigation.navigate('FileExplorer', { initialPath: path, title: 'SD-Card' });
-      },
-      gradientColors: ['#FF5722', '#f4511e'],
+      icon: <View><MaterialIcons name="description" size={28} color="#B5E61D" /></View>, label: 'Documents',
+      onPress: async () => navigation.navigate('FileExplorer', { initialPath: await getCommonDirectoryPath('Documents'), title: 'Documents' }),
+    },
+    {
+      icon: <View><MaterialIcons name="file-download" size={28} color="#00B8A9" /></View>, label: 'Downloads',
+      onPress: async () => navigation.navigate('FileExplorer', { initialPath: await getCommonDirectoryPath('Downloads'), title: 'Downloads' }),
+    },
+    {
+      icon: <View><MaterialCommunityIcons name="android" size={28} color="#B388FF" /></View>, label: 'APK\nInstallation files',
+      onPress: async () => navigation.navigate('FileExplorer', { initialPath: FileSystem.documentDirectory || '', title: 'APK Files' }), // Navigate to root for APKs, as a specific folder is unlikely via default FS
     },
   ];
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <ScrollView 
-        style={styles.scrollView}
-        contentContainerStyle={[styles.content, { paddingTop: insets.top }]}
+    <View style={[styles.container, { backgroundColor: '#111' }]}> {/* Force dark background */}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingTop: insets.top, paddingBottom: 30 }}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <Text style={[styles.appName, { color: theme.primary }]}>
-            File Manager
-          </Text>
+        {/* Title */}
+        <Text style={styles.title}>My Files</Text>
+
+        {/* Recent files button */}
+        <TouchableOpacity
+          style={styles.recentFilesBtn}
+          onPress={() => navigation.navigate('FileExplorer', { initialPath: FileSystem.documentDirectory || '', title: 'Recent Files' })} // Navigate to FileExplorer for recent files
+        >
+          <MaterialIcons name="access-time" size={22} color="#B5E61D" />
+          <Text style={styles.recentFilesText}>Recent files</Text>
+        </TouchableOpacity>
+
+        {/* Categories grid */}
+        <View style={styles.categoriesSection}>
+          {CATEGORY_DATA.map((item, idx) => (
+            <TouchableOpacity key={idx} style={styles.categoryBtn} onPress={item.onPress}>
+              {item.icon}
+              <Text style={styles.categoryLabel}>{item.label}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        <StorageCard theme={theme} />
+        {/* Storage section */}
+        <View style={styles.storageSection}>
+          {STORAGE_DATA.map((item, idx) => (
+            <View key={idx} style={styles.storageCard}>
+              {item.icon}
+              <View style={{ marginLeft: 12 }}>
+                <Text style={styles.storageLabel}>{item.label}</Text>
+                <Text style={styles.storageValue}>{item.value}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
 
-        <View style={styles.quickAccessSection}>
-          <Text style={[styles.sectionTitle, { color: theme.text }]}>
-            Quick Access
-          </Text>
-          <View style={styles.quickAccessGrid}>
-            {quickAccessItems.map((item, index) => (
-              <QuickAccessCard
-                key={index}
-                {...item}
-                theme={theme}
-              />
-            ))}
-          </View>
+        {/* Recycle bin & Analyse storage */}
+        <View style={styles.bottomSection}>
+          <TouchableOpacity
+            style={styles.bottomBtn}
+            onPress={() => Alert.alert('Recycle Bin', 'This feature is not yet implemented.')}
+          >
+            <MaterialIcons name="delete" size={22} color="#B5E61D" />
+            <Text style={styles.bottomBtnText}>Recycle bin</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.bottomBtn}
+            onPress={() => Alert.alert('Analyse Storage', 'This feature is not yet implemented.')}
+          >
+            <Ionicons name="search" size={22} color="#6EC1E4" />
+            <Text style={styles.bottomBtnText}>Analyse storage</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -240,105 +167,89 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  scrollView: {
-    flex: 1,
-  },
-  content: {
-    padding: 20,
-  },
-  header: {
-    marginBottom: 30,
-  },
-  welcomeText: {
-    fontSize: 24,
-    fontWeight: '300',
-  },
-  appName: {
-    fontSize: 36,
+  title: {
+    color: '#fff',
+    fontSize: 32,
     fontWeight: 'bold',
-    marginTop: 5,
+    alignSelf: 'center',
+    marginVertical: 24,
   },
-  quickAccessSection: {
-    marginBottom: 30,
+  recentFilesBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#222',
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    marginHorizontal: 12,
+    marginBottom: 18,
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 15,
+  recentFilesText: {
+    color: '#fff',
+    fontSize: 17,
+    marginLeft: 12,
+    fontWeight: '500',
   },
-  quickAccessGrid: {
+  categoriesSection: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
+    marginHorizontal: 12,
+    marginBottom: 28,
   },
-  quickAccessCard: {
-    width: (width - 50) / 2,
+  categoryBtn: {
+    width: (width - 48) / 3,
+    backgroundColor: '#181818',
     borderRadius: 16,
-    padding: 16,
-    marginBottom: 15,
-    flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 22,
+    marginBottom: 16,
   },
-  iconContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
+  categoryLabel: {
+    color: '#fff',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 16,
   },
-  cardContent: {
-    flex: 1,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  cardSubtitle: {
-    fontSize: 12,
+  storageSection: {
+    marginHorizontal: 12,
+    marginBottom: 28,
   },
   storageCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#181818',
     borderRadius: 16,
-    padding: 20,
-    marginBottom: 30,
+    padding: 18,
+    marginBottom: 14,
   },
-  storageHeader: {
+  storageLabel: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  storageValue: {
+    color: '#aaa',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  bottomSection: {
+    marginHorizontal: 12,
+  },
+  bottomBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 15,
+    backgroundColor: '#181818',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
   },
-  storageTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+  bottomBtnText: {
     color: '#fff',
-    marginLeft: 10,
-  },
-  storageStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#fff',
-    opacity: 0.8,
-  },
-  statDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: '#fff',
-    opacity: 0.3,
+    fontSize: 15,
+    marginLeft: 12,
+    fontWeight: '500',
   },
 });
 
