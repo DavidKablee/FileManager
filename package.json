@@ -1,12 +1,17 @@
 {
   "name": "myfilemanager",
   "version": "1.0.0",
-  "main": "src/index.ts",
+  "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:android": "eas build -p android",
+    "build:ios": "eas build -p ios",
+    "build:web": "eas build -p web",
+    "build": "tsc",
+    "serve": "node dist/index.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",

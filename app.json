@@ -26,7 +26,10 @@
       "edgeToEdgeEnabled": true,
       "permissions": [
         "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET"
       ]
     },
     "web": {
@@ -39,6 +42,11 @@
           "filePermission": "Allow $(PRODUCT_NAME) to access your files."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "35d6f542-b5fc-4a6b-95bb-01b6437d4bec"
+      }
+    }
   }
 }
