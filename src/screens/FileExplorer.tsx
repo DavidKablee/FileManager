@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Animated, Dimensions, Platform } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Animated, Dimensions, Platform, TouchableWithoutFeedback, Modal, TextInput } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -16,6 +16,8 @@ type RootStackParamList = {
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 type FileExplorerRouteProp = RouteProp<RootStackParamList, 'FileExplorer'>;
 
+type MaterialIconName = keyof typeof MaterialIcons.glyphMap;
+
 interface FileItem {
   name: string;
   path: string;
@@ -25,7 +27,7 @@ interface FileItem {
   itemCount?: number; // For directories
 }
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
 const formatDate = (timestamp: number) => {
   const date = new Date(timestamp * 1000); // Convert Unix timestamp to milliseconds
@@ -57,6 +59,86 @@ const getFolderIcon = (folderName: string) => {
   }
 };
 
+interface DropdownProps {
+  isVisible: boolean;
+  options: { label: string; onPress: () => void; isDestructive?: boolean; icon?: MaterialIconName }[];
+  onClose: () => void;
+  position: { top: number; left: number };
+}
+
+const Dropdown: React.FC<DropdownProps> = ({ isVisible, options, onClose, position }) => {
+  const [animation] = useState(new Animated.Value(0));
+
+  useEffect(() => {
+    if (isVisible) {
+      Animated.spring(animation, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 50,
+        friction: 7,
+      }).start();
+    } else {
+      animation.setValue(0);
+    }
+  }, [isVisible]);
+
+  if (!isVisible) return null;
+
+  return (
+    <TouchableWithoutFeedback onPress={onClose}>
+      <View style={styles.dropdownOverlay}>
+        <Animated.View 
+          style={[
+            styles.dropdownContainer, 
+            { 
+              top: position.top, 
+              left: position.left,
+              transform: [{
+                scale: animation.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.8, 1],
+                }),
+              }],
+              opacity: animation,
+            }
+          ]}
+        >
+          {options.map((option, index) => (
+            <TouchableOpacity
+              key={index}
+              style={[
+                styles.dropdownOption,
+                index === options.length - 1 && styles.dropdownOptionLast
+              ]}
+              onPress={() => {
+                option.onPress();
+                onClose();
+              }}
+            >
+              <View style={styles.dropdownOptionContent}>
+                {option.icon && (
+                  <MaterialIcons 
+                    name={option.icon} 
+                    size={20} 
+                    color={option.isDestructive ? '#ff4444' : '#6EC1E4'} 
+                    style={styles.dropdownOptionIcon} 
+                  />
+                )}
+                <Text style={[
+                  styles.dropdownOptionText,
+                  option.isDestructive && styles.dropdownOptionTextDestructive
+                ]}>
+                  {option.label}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </Animated.View>
+      </View>
+    </TouchableWithoutFeedback>
+  );
+};
+
 const FileExplorer: React.FC = () => {
   const route = useRoute<FileExplorerRouteProp>();
   const insets = useSafeAreaInsets();
@@ -70,13 +152,33 @@ const FileExplorer: React.FC = () => {
   const scrollY = new Animated.Value(0);
   const navigation = useNavigation<NavigationProp>();
 
+  const moreOptionsButtonRef = useRef<View>(null);
+  const [showMoreOptionsDropdown, setShowMoreOptionsDropdown] = useState(false);
+  const [moreOptionsDropdownPosition, setMoreOptionsDropdownPosition] = useState({ top: 0, left: 0 });
+
+  const fileItemActionDropdownRef = useRef<View>(null);
+  const [showFileItemActionDropdown, setShowFileItemActionDropdown] = useState(false);
+  const [fileItemActionDropdownPosition, setFileItemActionDropdownPosition] = useState({ top: 0, left: 0 });
+  const [selectedFileItemForActions, setSelectedFileItemForActions] = useState<FileItem | null>(null);
+
+  const sortFilterButtonRef = useRef<View>(null);
+  const [showSortFilterDropdown, setShowSortFilterDropdown] = useState(false);
+  const [sortFilterDropdownPosition, setSortFilterDropdownPosition] = useState({ top: 0, left: 0 });
+  const [sortBy, setSortBy] = useState<'name' | 'size' | 'modificationTime'>('name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<FileItem[]>([]);
+  const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+
   const toggleTheme = () => {
     setThemeType(themeType === 'dark' ? 'light' : 'dark');
   };
 
   useEffect(() => {
     loadFiles(currentPath);
-  }, [currentPath]);
+  }, [currentPath, sortBy, sortOrder]);
 
   const loadFiles = async (path: string) => {
     setLoading(true);
@@ -117,12 +219,26 @@ const FileExplorer: React.FC = () => {
         })
       );
       
-      // Sort folders first, then files, then alphabetically
+      // Sort files based on sortBy and sortOrder
       fileItems.sort((a, b) => {
+        // Folders always come first, regardless of sort criteria
         if (a.isFile !== b.isFile) {
-          return a.isFile ? 1 : -1; // Folders come before files
+          return a.isFile ? 1 : -1;
         }
-        return a.name.localeCompare(b.name); // Sort alphabetically
+
+        let comparison = 0;
+        if (sortBy === 'name') {
+          comparison = a.name.localeCompare(b.name);
+        } else if (sortBy === 'size') {
+          // For folders, use itemCount for size comparison (more items = larger)
+          const aSize = a.isFile ? a.size || 0 : a.itemCount || 0;
+          const bSize = b.isFile ? b.size || 0 : b.itemCount || 0;
+          comparison = aSize - bSize;
+        } else if (sortBy === 'modificationTime') {
+          comparison = (a.modificationTime || 0) - (b.modificationTime || 0);
+        }
+
+        return sortOrder === 'asc' ? comparison : -comparison;
       });
 
       setFiles(fileItems);
@@ -141,17 +257,9 @@ const FileExplorer: React.FC = () => {
       setCurrentPath(item.path);
       navigation.setOptions({ title: item.name }); // Update header title dynamically
     } else {
-      // Handle file press - open file or show options
-      Alert.alert(
-        `Open ${item.name}`,
-        'What would you like to do with this file?',
-        [
-          { text: 'Open', onPress: () => console.log('Open file', item.name) },
-          { text: 'Share', onPress: () => console.log('Share file', item.name) },
-          { text: 'Delete', onPress: () => handleDeleteItem(item) },
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
+      // Handle file press - open file or show options via dropdown
+      setSelectedFileItemForActions(item);
+      setShowFileItemActionDropdown(true);
     }
   };
 
@@ -169,6 +277,7 @@ const FileExplorer: React.FC = () => {
   };
 
   const handleNewFolder = () => {
+    setShowMoreOptionsDropdown(false); // Close dropdown
     Alert.prompt(
       'Create New Folder',
       'Enter folder name:',
@@ -187,6 +296,7 @@ const FileExplorer: React.FC = () => {
   };
 
   const handleNewFile = () => {
+    setShowMoreOptionsDropdown(false); // Close dropdown
     Alert.prompt(
       'Create New File',
       'Enter file name:',
@@ -205,6 +315,7 @@ const FileExplorer: React.FC = () => {
   };
 
   const handleRenameItem = (item: FileItem) => {
+    setShowFileItemActionDropdown(false); // Close dropdown
     Alert.prompt(
       `Rename ${item.name}`,
       'Enter new name:',
@@ -225,6 +336,7 @@ const FileExplorer: React.FC = () => {
   };
 
   const handleDeleteItem = (item: FileItem) => {
+    setShowFileItemActionDropdown(false); // Close dropdown
     Alert.alert(
       'Confirm Delete',
       `Are you sure you want to delete ${item.name}? This cannot be undone.`,
@@ -247,41 +359,71 @@ const FileExplorer: React.FC = () => {
   };
 
   const handleSearch = () => {
-    Alert.prompt(
-      'Search Files/Folders',
-      'Enter search query:',
-      async (query) => {
-        if (query) {
-          try {
-            const results = await searchItems(currentPath, query);
-            if (results.length > 0) {
-              Alert.alert('Search Results', `Found ${results.length} items:\n\n${results.join('\n')}`);
+    setIsSearchModalVisible(true);
+  };
+
+  const performSearch = async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const results = await searchItems(currentPath, query);
+      // Convert string paths to FileItem objects
+      const fileItems = await Promise.all(
+        results.map(async (path) => {
+          const info = await FileSystem.getInfoAsync(path);
+          let itemCount = undefined;
+          let size = undefined;
+          let modificationTime = undefined;
+
+          if (info.exists) {
+            if (info.isDirectory) {
+              try {
+                const subItems = await FileSystem.readDirectoryAsync(path);
+                itemCount = subItems.length;
+              } catch (subDirError) {
+                console.warn(`Could not read subdirectory ${path}:`, subDirError);
+                itemCount = 0;
+              }
             } else {
-              Alert.alert('Search Results', 'No items found matching your query.');
+              size = info.size;
+              modificationTime = info.modificationTime;
             }
-            // For a more integrated search, you'd filter the 'files' state directly
-            // For simplicity, we are just showing an alert with results
-          } catch (error: any) {
-            Alert.alert('Error', `Failed to search: ${error.message}`);
           }
-        }
-      },
-      'plain-text'
-    );
+
+          return {
+            name: path.split('/').pop() || '',
+            path,
+            isFile: info.exists && !info.isDirectory,
+            size,
+            modificationTime,
+            itemCount,
+          };
+        })
+      );
+      setSearchResults(fileItems);
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to search: ${error.message}`);
+    } finally {
+      setIsSearching(false);
+    }
   };
 
   const handleMoreOptions = () => {
-    Alert.alert(
-      'Options',
-      'Choose an action:',
-      [
-        { text: 'Create New Folder', onPress: handleNewFolder },
-        { text: 'Create New File', onPress: handleNewFile },
-        { text: 'Copy', onPress: () => Alert.alert('Copy', 'Copy functionality not yet implemented.') },
-        { text: 'Move', onPress: () => Alert.alert('Move', 'Move functionality not yet implemented.') },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
+    if (moreOptionsButtonRef.current) {
+      (moreOptionsButtonRef.current as any).measureInWindow((x: number, y: number, width: number, height: number) => {
+        setMoreOptionsDropdownPosition({ top: y + height, left: x });
+        setShowMoreOptionsDropdown(true);
+      });
+    }
+  };
+
+  const handleLongPressItem = (item: FileItem) => {
+    setSelectedFileItemForActions(item);
+    setShowFileItemActionDropdown(true);
   };
 
   const renderHeader = () => (
@@ -304,7 +446,9 @@ const FileExplorer: React.FC = () => {
             <MaterialIcons name="search" size={24} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleMoreOptions} style={styles.headerIconBtn}>
-            <MaterialIcons name="more-vert" size={24} color="#fff" />
+            <View ref={moreOptionsButtonRef} collapsable={false}>
+              <MaterialIcons name="more-vert" size={24} color="#fff" />
+            </View>
           </TouchableOpacity>
         </View>
       </View>
@@ -313,17 +457,24 @@ const FileExplorer: React.FC = () => {
 
   const renderSortFilterBar = () => (
     <View style={styles.sortFilterBar}>
-      <TouchableOpacity style={styles.sortFilterButton}>
-        <Text style={styles.sortFilterText}></Text>
-        <MaterialIcons name="arrow-drop-down" size={20} color="#fff" />
+      <TouchableOpacity onPress={() => {
+        if (sortFilterButtonRef.current) {
+          (sortFilterButtonRef.current as any).measureInWindow((x: number, y: number, width: number, height: number) => {
+            // Adjust position to ensure dropdown is within screen bounds if it opens near the right edge
+            const adjustedLeft = x; // Keep left as is, dropdown has minWidth
+            setSortFilterDropdownPosition({ top: y + height, left: adjustedLeft });
+            setShowSortFilterDropdown(true);
+          });
+        }
+      }} style={styles.sortFilterButton}>
+        <View ref={sortFilterButtonRef} collapsable={false}>
+          <Text style={styles.sortFilterText}>Sort by: {sortBy === 'modificationTime' ? 'Date' : sortBy.charAt(0).toUpperCase() + sortBy.slice(1)}</Text>
+          <MaterialIcons name="arrow-drop-down" size={20} color="#fff" />
+        </View>
       </TouchableOpacity>
       <View style={styles.sortOptions}>
-        <TouchableOpacity style={styles.sortFilterButton}>
-          <Text style={styles.sortFilterText}>Name</Text>
-          <MaterialIcons name="arrow-upward" size={20} color="#fff" />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.sortFilterButton}>
-          <MaterialIcons name="sort" size={20} color="#fff" />
+        <TouchableOpacity onPress={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')} style={styles.sortFilterButton}>
+          <MaterialIcons name={sortOrder === 'asc' ? 'arrow-upward' : 'arrow-downward'} size={20} color="#fff" />
         </TouchableOpacity>
         <TouchableOpacity style={styles.sortFilterButton}>
           <MaterialIcons name="grid-view" size={20} color="#fff" />
@@ -335,13 +486,11 @@ const FileExplorer: React.FC = () => {
   const renderItem = ({ item }: { item: FileItem }) => (
     <TouchableOpacity
       onPress={() => openFolder(item)}
-      onLongPress={() => handleLongPressItem(item)} // Add long press handler
+      onLongPress={() => handleLongPressItem(item)}
       style={styles.itemContainer}
     >
       <View style={styles.itemIconContainer}>
         {item.isFile ? (
-          // For special patterned files, you'd use a custom Image component if assets are available
-          // For now, using a generic file icon
           <MaterialIcons name="insert-drive-file" size={28} color="#ccc" />
         ) : (
           <MaterialIcons name={getFolderIcon(item.name)} size={28} color="#6EC1E4" />
@@ -349,11 +498,26 @@ const FileExplorer: React.FC = () => {
       </View>
       <View style={styles.itemContent}>
         <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
-        <Text style={styles.itemDetails}>
-          {item.modificationTime ? formatDate(item.modificationTime) : ''}
-          {!item.isFile && item.itemCount !== undefined && ` • ${item.itemCount} items`}
-          {item.isFile && item.size !== undefined && ` • ${formatBytesToGB(item.size)}`}
-        </Text>
+        <View style={styles.itemDetailsContainer}>
+          {item.modificationTime && (
+            <View style={styles.itemDetail}>
+              <MaterialIcons name="access-time" size={14} color="#666" />
+              <Text style={styles.itemDetails}>{formatDate(item.modificationTime)}</Text>
+            </View>
+          )}
+          {!item.isFile && item.itemCount !== undefined && (
+            <View style={styles.itemDetail}>
+              <MaterialIcons name="folder" size={14} color="#666" />
+              <Text style={styles.itemDetails}>{item.itemCount} items</Text>
+            </View>
+          )}
+          {item.isFile && item.size !== undefined && (
+            <View style={styles.itemDetail}>
+              <MaterialIcons name="storage" size={14} color="#666" />
+              <Text style={styles.itemDetails}>{formatBytesToGB(item.size)}</Text>
+            </View>
+          )}
+        </View>
       </View>
       {!item.isFile && (
         <MaterialIcons name="chevron-right" size={24} color="#555" />
@@ -361,20 +525,65 @@ const FileExplorer: React.FC = () => {
     </TouchableOpacity>
   );
 
-  // New function to handle long press on items
-  const handleLongPressItem = (item: FileItem) => {
-    Alert.alert(
-      `Actions for ${item.name}`,
-      'Choose an action:',
-      [
-        { text: 'Rename', onPress: () => handleRenameItem(item) },
-        { text: 'Delete', onPress: () => handleDeleteItem(item) },
-        { text: 'Copy', onPress: () => Alert.alert('Copy', 'Copy functionality not yet implemented.') },
-        { text: 'Move', onPress: () => Alert.alert('Move', 'Move functionality not yet implemented.') },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
-  };
+  const renderSearchModal = () => (
+    <Modal
+      visible={isSearchModalVisible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={() => {
+        setIsSearchModalVisible(false);
+        setSearchQuery('');
+        setSearchResults([]);
+      }}
+    >
+      <View style={styles.searchModalContainer}>
+        <View style={styles.searchModalContent}>
+          <View style={styles.searchHeader}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search files and folders..."
+              placeholderTextColor="#666"
+              value={searchQuery}
+              onChangeText={(text) => {
+                setSearchQuery(text);
+                performSearch(text);
+              }}
+              autoFocus
+            />
+            <TouchableOpacity 
+              style={styles.searchCloseButton}
+              onPress={() => {
+                setIsSearchModalVisible(false);
+                setSearchQuery('');
+                setSearchResults([]);
+              }}
+            >
+              <MaterialIcons name="close" size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          
+          {isSearching ? (
+            <ActivityIndicator size="large" color="#6EC1E4" style={styles.searchLoader} />
+          ) : (
+            <FlatList
+              data={searchResults}
+              keyExtractor={(item) => item.path}
+              renderItem={renderItem}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <MaterialIcons name="search" size={48} color="#555" />
+                  <Text style={styles.emptyText}>
+                    {searchQuery ? 'No results found' : 'Start typing to search...'}
+                  </Text>
+                </View>
+              }
+              contentContainerStyle={styles.searchResultsList}
+            />
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <View style={[styles.container, { backgroundColor: '#000' }]}>
@@ -399,6 +608,48 @@ const FileExplorer: React.FC = () => {
           showsVerticalScrollIndicator={false}
         />
       )}
+      <Dropdown
+        isVisible={showMoreOptionsDropdown}
+        options={[
+          { label: 'Create New Folder', onPress: handleNewFolder, icon: 'create-new-folder' as MaterialIconName },
+          { label: 'Create New File', onPress: handleNewFile, icon: 'note-add' as MaterialIconName },
+          { label: 'Copy', onPress: () => Alert.alert('Copy', 'Copy functionality not yet implemented.'), icon: 'content-copy' as MaterialIconName },
+          { label: 'Move', onPress: () => Alert.alert('Move', 'Move functionality not yet implemented.'), icon: 'drive-file-move' as MaterialIconName },
+        ]}
+        onClose={() => setShowMoreOptionsDropdown(false)}
+        position={moreOptionsDropdownPosition}
+      />
+
+      {selectedFileItemForActions && (
+        <Dropdown
+          isVisible={showFileItemActionDropdown}
+          options={[
+            ...(selectedFileItemForActions.isFile ? [
+              { label: 'Open', onPress: () => console.log('Open file', selectedFileItemForActions.name), icon: 'open-in-new' as MaterialIconName },
+              { label: 'Share', onPress: () => console.log('Share file', selectedFileItemForActions.name), icon: 'share' as MaterialIconName },
+            ] : []),
+            { label: 'Rename', onPress: () => handleRenameItem(selectedFileItemForActions), icon: 'edit' as MaterialIconName },
+            { label: 'Delete', onPress: () => handleDeleteItem(selectedFileItemForActions), isDestructive: true, icon: 'delete' as MaterialIconName },
+            { label: 'Copy', onPress: () => Alert.alert('Copy', 'Copy functionality not yet implemented.'), icon: 'content-copy' as MaterialIconName },
+            { label: 'Move', onPress: () => Alert.alert('Move', 'Move functionality not yet implemented.'), icon: 'drive-file-move' as MaterialIconName },
+          ]}
+          onClose={() => setShowFileItemActionDropdown(false)}
+          position={fileItemActionDropdownPosition}
+        />
+      )}
+
+      <Dropdown
+        isVisible={showSortFilterDropdown}
+        options={[
+          { label: 'Name', onPress: () => { setSortBy('name'); setSortOrder('asc'); }, icon: 'sort-by-alpha' as MaterialIconName },
+          { label: 'Size', onPress: () => { setSortBy('size'); setSortOrder('desc'); }, icon: 'storage' as MaterialIconName },
+          { label: 'Date', onPress: () => { setSortBy('modificationTime'); setSortOrder('desc'); }, icon: 'event' as MaterialIconName },
+        ]}
+        onClose={() => setShowSortFilterDropdown(false)}
+        position={sortFilterDropdownPosition}
+      />
+
+      {renderSearchModal()}
     </View>
   );
 };
@@ -491,10 +742,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
   },
+  itemDetailsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 4,
+    gap: 8,
+  },
+  itemDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   itemDetails: {
-    color: '#aaa',
+    color: '#666',
     fontSize: 12,
-    marginTop: 2,
   },
   emptyContainer: {
     flex: 1,
@@ -512,6 +773,92 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   listContent: {
+    paddingBottom: 20,
+  },
+  dropdownOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  dropdownContainer: {
+    position: 'absolute',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    paddingVertical: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    minWidth: 200,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  dropdownOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  dropdownOptionLast: {
+    borderBottomWidth: 0,
+  },
+  dropdownOptionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dropdownOptionIcon: {
+    marginRight: 12,
+  },
+  dropdownOptionText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  dropdownOptionTextDestructive: {
+    color: '#ff4444',
+  },
+  searchModalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+  },
+  searchModalContent: {
+    flex: 1,
+    marginTop: 50,
+    backgroundColor: '#000',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  searchHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  searchInput: {
+    flex: 1,
+    height: 40,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 20,
+    paddingHorizontal: 15,
+    color: '#fff',
+    fontSize: 16,
+  },
+  searchCloseButton: {
+    marginLeft: 10,
+    padding: 5,
+  },
+  searchLoader: {
+    marginTop: 20,
+  },
+  searchResultsList: {
     paddingBottom: 20,
   },
 });
