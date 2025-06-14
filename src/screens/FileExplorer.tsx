@@ -485,7 +485,11 @@ const FileExplorer: React.FC = () => {
 
   const renderItem = ({ item }: { item: FileItem }) => (
     <TouchableOpacity
-      onPress={() => openFolder(item)}
+      onPress={() => {
+        if (item.isFile) {
+          openFolder(item);
+        }
+      }}
       onLongPress={() => handleLongPressItem(item)}
       style={styles.itemContainer}
     >
