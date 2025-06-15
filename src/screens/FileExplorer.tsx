@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Animated, Dimensions, Platform, TouchableWithoutFeedback, Modal, TextInput } from 'react-native';
 import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
+import * as DocumentPicker from 'expo-document-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useThemeContext } from '../utils/ThemeContext';
@@ -172,15 +174,54 @@ const FileExplorer: React.FC = () => {
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
 
+  const [hasMediaPermission, setHasMediaPermission] = useState<boolean | null>(null);
+  const [hasDocumentPermission, setHasDocumentPermission] = useState<boolean | null>(null);
+
   const toggleTheme = () => {
     setThemeType(themeType === 'dark' ? 'light' : 'dark');
   };
 
   useEffect(() => {
+    requestPermissions();
     loadFiles(currentPath);
   }, [currentPath, sortBy, sortOrder]);
 
+  const requestPermissions = async () => {
+    try {
+      // Request media library permissions
+      const mediaPermission = await MediaLibrary.requestPermissionsAsync();
+      setHasMediaPermission(mediaPermission.granted);
+
+      // For document access, we'll request it when needed
+      setHasDocumentPermission(true);
+
+      if (!mediaPermission.granted) {
+        Alert.alert(
+          'Permission Required',
+          'This app needs access to your media library to show your files. Please grant permission in your device settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => MediaLibrary.requestPermissionsAsync() }
+          ]
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error('Error requesting permissions:', error);
+      Alert.alert('Error', 'Failed to request permissions. Please try again.');
+      return false;
+    }
+  };
+
   const loadFiles = async (path: string) => {
+    if (!hasMediaPermission) {
+      const permissionGranted = await requestPermissions();
+      if (!permissionGranted) {
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const items = await FileSystem.readDirectoryAsync(path);
@@ -200,9 +241,9 @@ const FileExplorer: React.FC = () => {
                 itemCount = subItems.length;
               } catch (subDirError) {
                 console.warn(`Could not read subdirectory ${fullPath}:`, subDirError);
-                itemCount = 0; // Assume 0 if not readable due to permissions etc.
+                itemCount = 0;
               }
-            } else { // It's a file
+            } else {
               size = info.size;
               modificationTime = info.modificationTime;
             }
@@ -230,7 +271,6 @@ const FileExplorer: React.FC = () => {
         if (sortBy === 'name') {
           comparison = a.name.localeCompare(b.name);
         } else if (sortBy === 'size') {
-          // For folders, use itemCount for size comparison (more items = larger)
           const aSize = a.isFile ? a.size || 0 : a.itemCount || 0;
           const bSize = b.isFile ? b.size || 0 : b.itemCount || 0;
           comparison = aSize - bSize;
@@ -242,9 +282,20 @@ const FileExplorer: React.FC = () => {
       });
 
       setFiles(fileItems);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading files:', error);
-      Alert.alert('Error', 'Failed to load files. Please try again.');
+      if (error.message.includes('permission')) {
+        Alert.alert(
+          'Permission Required',
+          'This app needs access to your files. Please grant permission in your device settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => MediaLibrary.requestPermissionsAsync() }
+          ]
+        );
+      } else {
+        Alert.alert('Error', 'Failed to load files. Please try again.');
+      }
       setFiles([]);
     } finally {
       setLoading(false);
@@ -426,31 +477,57 @@ const FileExplorer: React.FC = () => {
     setShowFileItemActionDropdown(true);
   };
 
+  const handleOpenDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        copyToCacheDirectory: true
+      });
+
+      if (result.type === 'success') {
+        // Add the picked document to the current directory
+        const newFile: FileItem = {
+          name: result.name,
+          path: result.uri,
+          isFile: true,
+          size: result.size,
+          modificationTime: Date.now() / 1000
+        };
+        setFiles(prevFiles => [...prevFiles, newFile]);
+      }
+    } catch (error) {
+      console.error('Error picking document:', error);
+      Alert.alert('Error', 'Failed to pick document. Please try again.');
+    }
+  };
+
   const renderHeader = () => (
-    <View style={[
-      styles.header,
-      { paddingTop: insets.top, backgroundColor: '#000' } // Force dark background
-    ]}>
-      <View style={styles.headerTopBar}>
-        <TouchableOpacity onPress={goBack} style={styles.headerIconBtn}>
-          <MaterialIcons name="arrow-back-ios" size={24} color="#fff" />
+    <View style={[styles.header, { backgroundColor: theme.colors.background }]}>
+      <View style={styles.headerLeft}>
+        <TouchableOpacity onPress={goBack} style={styles.backButton}>
+          <MaterialIcons name="arrow-back" size={24} color={theme.colors.text} />
         </TouchableOpacity>
-        <View style={styles.currentPathContainer}>
-          <MaterialIcons name="home" size={20} color="#6EC1E4" style={{ marginRight: 5 }} />
-          <Text style={styles.currentPathText}>
-            {route.params?.title || currentPath.split('/').filter(Boolean).pop() || 'Internal storage'}
-          </Text>
-        </View>
-        <View style={styles.headerRightIcons}>
-          <TouchableOpacity onPress={handleSearch} style={styles.headerIconBtn}>
-            <MaterialIcons name="search" size={24} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleMoreOptions} style={styles.headerIconBtn}>
-            <View ref={moreOptionsButtonRef} collapsable={false}>
-              <MaterialIcons name="more-vert" size={24} color="#fff" />
-            </View>
-          </TouchableOpacity>
-        </View>
+        <Text style={[styles.headerTitle, { color: theme.colors.text }]} numberOfLines={1}>
+          {route.params?.title || 'Files'}
+        </Text>
+      </View>
+      <View style={styles.headerRight}>
+        <TouchableOpacity onPress={handleOpenDocument} style={styles.headerButton}>
+          <MaterialIcons name="file-upload" size={24} color={theme.colors.text} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleSearch} style={styles.headerButton}>
+          <MaterialIcons name="search" size={24} color={theme.colors.text} />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={toggleTheme} style={styles.headerButton}>
+          <MaterialIcons name={themeType === 'dark' ? 'light-mode' : 'dark-mode'} size={24} color={theme.colors.text} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          ref={moreOptionsButtonRef}
+          onPress={handleMoreOptions}
+          style={styles.headerButton}
+        >
+          <MaterialIcons name="more-vert" size={24} color={theme.colors.text} />
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -670,30 +747,25 @@ const styles = StyleSheet.create({
     borderBottomColor: '#333',
     paddingBottom: 10,
   },
-  headerTopBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 15,
-    height: 56, // Fixed height for header top bar
-  },
-  headerIconBtn: {
-    padding: 5,
-  },
-  currentPathContainer: {
+  headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginLeft: 10, // Adjust spacing from back button
   },
-  currentPathText: {
+  backButton: {
+    padding: 5,
+  },
+  headerTitle: {
     color: '#6EC1E4',
     fontSize: 16,
     fontWeight: '500',
   },
-  headerRightIcons: {
+  headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  headerButton: {
+    padding: 5,
   },
   sortFilterBar: {
     flexDirection: 'row',

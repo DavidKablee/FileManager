@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, Alert, Modal, TextInput, FlatList, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, Alert, Modal, TextInput, FlatList, ActivityIndicator, Platform, Linking } from 'react-native';
 import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useThemeContext } from '../utils/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -96,72 +96,113 @@ const HomeScreen = () => {
     },
   ];
 
-  // Function to get common directories, creating them if they don't exist
-  const getCommonDirectoryPath = async (subDir: string) => {
-    const baseDir = Platform.OS === 'android' 
-      ? '/storage/emulated/0'  // Android internal storage path
-      : FileSystem.documentDirectory; // iOS uses app's document directory
+  const handleCategoryPress = async (path: string, title: string) => {
+    try {
+      // Check if we can access the directory
+      const dirInfo = await FileSystem.getInfoAsync(path);
+      
+      if (!dirInfo.exists) {
+        // Try to create the directory if it doesn't exist
+        try {
+          await FileSystem.makeDirectoryAsync(path, { intermediates: true });
+        } catch (error) {
+          console.warn(`Could not create directory ${path}:`, error);
+          Alert.alert(
+            'Access Denied',
+            `Unable to access ${title}. Please make sure you have granted the necessary permissions.`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Open Settings', 
+                onPress: () => {
+                  if (Platform.OS === 'ios') {
+                    Linking.openURL('app-settings:');
+                  } else {
+                    Linking.openSettings();
+                  }
+                }
+              }
+            ]
+          );
+          return;
+        }
+      }
 
-    if (!baseDir) {
-      throw new Error('Storage directory not available');
+      // Navigate to the FileExplorer with the selected path
+      navigation.navigate('FileExplorer', {
+        initialPath: path,
+        title: title
+      });
+    } catch (error) {
+      console.error('Error accessing directory:', error);
+      Alert.alert(
+        'Error',
+        `Unable to access ${title}. Please make sure you have granted the necessary permissions.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Open Settings', 
+            onPress: () => {
+              if (Platform.OS === 'ios') {
+                Linking.openURL('app-settings:');
+              } else {
+                Linking.openSettings();
+              }
+            }
+          }
+        ]
+      );
     }
-
-    const fullPath = `${baseDir}/${subDir}/`;
-    const dirInfo = await FileSystem.getInfoAsync(fullPath);
-    if (!dirInfo.exists) {
-      await FileSystem.makeDirectoryAsync(fullPath, { intermediates: true });
-    }
-    return fullPath;
   };
 
   const CATEGORY_DATA = [
     {
       icon: <View><MaterialIcons name="image" size={28} color="#6EC1E4" /></View>, 
       label: 'Images',
-      onPress: async () => navigation.navigate('FileExplorer', { 
-        initialPath: Platform.OS === 'android' ? '/storage/emulated/0/DCIM' : await getCommonDirectoryPath('Pictures'), 
-        title: 'Images' 
-      }),
+      onPress: () => handleCategoryPress(
+        Platform.OS === 'android' ? '/storage/emulated/0/DCIM' : FileSystem.documentDirectory + '/Pictures',
+        'Images'
+      ),
     },
     {
       icon: <View><MaterialIcons name="videocam" size={28} color="#A084E8" /></View>, 
       label: 'Videos',
-      onPress: async () => navigation.navigate('FileExplorer', { 
-        initialPath: Platform.OS === 'android' ? '/storage/emulated/0/Movies' : await getCommonDirectoryPath('Videos'), 
-        title: 'Videos' 
-      }),
+      onPress: () => handleCategoryPress(
+        Platform.OS === 'android' ? '/storage/emulated/0/Movies' : FileSystem.documentDirectory + '/Videos',
+        'Videos'
+      ),
     },
     {
       icon: <View><MaterialIcons name="music-note" size={28} color="#F67280" /></View>, 
       label: 'Audio files',
-      onPress: async () => navigation.navigate('FileExplorer', { 
-        initialPath: Platform.OS === 'android' ? '/storage/emulated/0/Music' : await getCommonDirectoryPath('Music'), 
-        title: 'Audio files' 
-      }),
+      onPress: () => handleCategoryPress(
+        Platform.OS === 'android' ? '/storage/emulated/0/Music' : FileSystem.documentDirectory + '/Music',
+        'Audio files'
+      ),
     },
     {
       icon: <View><MaterialIcons name="description" size={28} color="#B5E61D" /></View>, 
       label: 'Documents',
-      onPress: async () => navigation.navigate('FileExplorer', { 
-        initialPath: Platform.OS === 'android' ? '/storage/emulated/0/Documents' : await getCommonDirectoryPath('Documents'), 
-        title: 'Documents' 
-      }),
+      onPress: () => handleCategoryPress(
+        Platform.OS === 'android' ? '/storage/emulated/0/Documents' : FileSystem.documentDirectory + '/Documents',
+        'Documents'
+      ),
     },
     {
       icon: <View><MaterialIcons name="file-download" size={28} color="#00B8A9" /></View>, 
       label: 'Downloads',
-      onPress: async () => navigation.navigate('FileExplorer', { 
-        initialPath: Platform.OS === 'android' ? '/storage/emulated/0/Download' : await getCommonDirectoryPath('Downloads'), 
-        title: 'Downloads' 
-      }),
+      onPress: () => handleCategoryPress(
+        Platform.OS === 'android' ? '/storage/emulated/0/Download' : FileSystem.documentDirectory + '/Downloads',
+        'Downloads'
+      ),
     },
     {
       icon: <View><MaterialCommunityIcons name="android" size={28} color="#B388FF" /></View>, 
       label: 'APK\nInstallation files',
-      onPress: async () => navigation.navigate('FileExplorer', { 
-        initialPath: Platform.OS === 'android' ? '/storage/emulated/0/Download' : FileSystem.documentDirectory || '', 
-        title: 'APK Files' 
-      }),
+      onPress: () => handleCategoryPress(
+        Platform.OS === 'android' ? '/storage/emulated/0/Download' : FileSystem.documentDirectory,
+        'APK Files'
+      ),
     },
   ];
 
