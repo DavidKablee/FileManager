@@ -9,6 +9,7 @@ import { useThemeContext } from '../utils/ThemeContext';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { formatBytesToGB, createFolder, createFile, renameItem, deleteItem, searchItems } from '../utils/FileManagement';
+import { addToRecentFiles } from '../utils/RecentFiles';
 
 type RootStackParamList = {
   Home: undefined;
@@ -142,87 +143,36 @@ const Dropdown: React.FC<DropdownProps> = ({ isVisible, options, onClose, positi
 };
 
 const FileExplorer: React.FC = () => {
-  const route = useRoute<FileExplorerRouteProp>();
-  const insets = useSafeAreaInsets();
-  const { theme, themeType, setThemeType } = useThemeContext();
-  const [currentPath, setCurrentPath] = useState(route.params?.initialPath || FileSystem.documentDirectory || '');
-  const [files, setFiles] = useState<FileItem[]>([]);
-  const [selectedItems, setSelectedItems] = useState<string[]>([]);
-  const [isSelectMode, setIsSelectMode] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [history, setHistory] = useState<string[]>([]);
-  const scrollY = new Animated.Value(0);
   const navigation = useNavigation<NavigationProp>();
-
-  const moreOptionsButtonRef = useRef<View>(null);
+  const route = useRoute<RouteProp<RootStackParamList, 'FileExplorer'>>();
+  const { theme, themeType, toggleTheme } = useThemeContext();
+  const insets = useSafeAreaInsets();
+  const [currentPath, setCurrentPath] = useState(route.params.initialPath);
+  const [history, setHistory] = useState<string[]>([]);
+  const [files, setFiles] = useState<FileItem[]>([]);
   const [showMoreOptionsDropdown, setShowMoreOptionsDropdown] = useState(false);
-  const [moreOptionsDropdownPosition, setMoreOptionsDropdownPosition] = useState({ top: 0, left: 0 });
-
-  const fileItemActionDropdownRef = useRef<View>(null);
   const [showFileItemActionDropdown, setShowFileItemActionDropdown] = useState(false);
-  const [fileItemActionDropdownPosition, setFileItemActionDropdownPosition] = useState({ top: 0, left: 0 });
-  const [selectedFileItemForActions, setSelectedFileItemForActions] = useState<FileItem | null>(null);
-
-  const sortFilterButtonRef = useRef<View>(null);
   const [showSortFilterDropdown, setShowSortFilterDropdown] = useState(false);
+  const [selectedFileItemForActions, setSelectedFileItemForActions] = useState<FileItem>({} as FileItem);
+  const [moreOptionsDropdownPosition, setMoreOptionsDropdownPosition] = useState({ top: 0, left: 0 });
+  const [fileItemActionDropdownPosition, setFileItemActionDropdownPosition] = useState({ top: 0, left: 0 });
   const [sortFilterDropdownPosition, setSortFilterDropdownPosition] = useState({ top: 0, left: 0 });
   const [sortBy, setSortBy] = useState<'name' | 'size' | 'modificationTime'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-
+  const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<FileItem[]>([]);
-  const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
 
-  const [hasMediaPermission, setHasMediaPermission] = useState<boolean | null>(null);
-  const [hasDocumentPermission, setHasDocumentPermission] = useState<boolean | null>(null);
-
-  const toggleTheme = () => {
-    setThemeType(themeType === 'dark' ? 'light' : 'dark');
-  };
+  const moreOptionsButtonRef = useRef(null);
+  const sortFilterButtonRef = useRef(null);
 
   useEffect(() => {
-    requestPermissions();
     loadFiles(currentPath);
-  }, [currentPath, sortBy, sortOrder]);
-
-  const requestPermissions = async () => {
-    try {
-      // Request media library permissions
-      const mediaPermission = await MediaLibrary.requestPermissionsAsync();
-      setHasMediaPermission(mediaPermission.granted);
-
-      // For document access, we'll request it when needed
-      setHasDocumentPermission(true);
-
-      if (!mediaPermission.granted) {
-        Alert.alert(
-          'Permission Required',
-          'This app needs access to your media library to show your files. Please grant permission in your device settings.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => MediaLibrary.requestPermissionsAsync() }
-          ]
-        );
-        return false;
-      }
-      return true;
-    } catch (error) {
-      console.error('Error requesting permissions:', error);
-      Alert.alert('Error', 'Failed to request permissions. Please try again.');
-      return false;
-    }
-  };
+  }, [currentPath]);
 
   const loadFiles = async (path: string) => {
-    if (!hasMediaPermission) {
-      const permissionGranted = await requestPermissions();
-      if (!permissionGranted) {
-        return;
-      }
-    }
-
-    setLoading(true);
+    setFiles([]);
     try {
       const items = await FileSystem.readDirectoryAsync(path);
 
@@ -297,8 +247,17 @@ const FileExplorer: React.FC = () => {
         Alert.alert('Error', 'Failed to load files. Please try again.');
       }
       setFiles([]);
-    } finally {
-      setLoading(false);
+    }
+  };
+
+  const handleItemPress = async (item: FileItem) => {
+    if (item.isDirectory) {
+      navigation.push('FileExplorer', { path: item.path });
+    } else {
+      // Add to recent files when a file is accessed
+      await addToRecentFiles(item.path);
+      // Handle file opening
+      Alert.alert('Open File', `Would you like to open ${item.name}?`);
     }
   };
 
@@ -670,25 +629,21 @@ const FileExplorer: React.FC = () => {
     <View style={[styles.container, { backgroundColor: '#000' }]}>
       {renderHeader()}
       {renderSortFilterBar()}
-      {loading ? (
-        <ActivityIndicator size="large" color="#6EC1E4" style={styles.loader} />
-      ) : (
-        <FlatList
-          data={files}
-          keyExtractor={(item) => item.path}
-          renderItem={renderItem}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialIcons name="folder-open" size={48} color="#555" />
-              <Text style={styles.emptyText}>
-                No files found
-              </Text>
-            </View>
-          }
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
+      <FlatList
+        data={files}
+        keyExtractor={(item) => item.path}
+        renderItem={renderItem}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <MaterialIcons name="folder-open" size={48} color="#555" />
+            <Text style={styles.emptyText}>
+              No files found
+            </Text>
+          </View>
+        }
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+      />
       <Dropdown
         isVisible={showMoreOptionsDropdown}
         options={[
@@ -701,7 +656,7 @@ const FileExplorer: React.FC = () => {
         position={moreOptionsDropdownPosition}
       />
 
-      {selectedFileItemForActions && (
+      {showFileItemActionDropdown && (
         <Dropdown
           isVisible={showFileItemActionDropdown}
           options={[

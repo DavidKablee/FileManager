@@ -7,10 +7,13 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as FileSystem from 'expo-file-system';
 import { searchItems } from '../utils/FileManagement';
+import { getRecentFiles, RecentFile } from '../utils/RecentFiles';
+import { formatFileSize } from '../utils/FileManagement';
 
 type RootStackParamList = {
   Home: undefined;
   FileExplorer: { initialPath: string; title: string };
+  RecycleBin: undefined;
 };
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -35,6 +38,7 @@ const HomeScreen = () => {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
 
   useEffect(() => {
     const getStorageInfo = async () => {
@@ -77,6 +81,25 @@ const HomeScreen = () => {
 
     getStorageInfo();
   }, []);
+
+  useEffect(() => {
+    loadRecentFiles();
+  }, []);
+
+  const loadRecentFiles = async () => {
+    const files = await getRecentFiles();
+    setRecentFiles(files);
+  };
+
+  const handleFilePress = (file: RecentFile) => {
+    if (file.isFile) {
+      // Handle file opening
+      Alert.alert('Open File', `Would you like to open ${file.name}?`);
+    } else {
+      // Navigate to directory
+      navigation.navigate('FileExplorer', { initialPath: file.path, title: file.name });
+    }
+  };
 
   const STORAGE_DATA = [
     {
@@ -200,7 +223,7 @@ const HomeScreen = () => {
       icon: <View><MaterialCommunityIcons name="android" size={28} color="#B388FF" /></View>, 
       label: 'APK\nInstallation files',
       onPress: () => handleCategoryPress(
-        Platform.OS === 'android' ? '/storage/emulated/0/Download' : FileSystem.documentDirectory,
+        Platform.OS === 'android' ? '/storage/emulated/0/Download' : (FileSystem.documentDirectory || ''),
         'APK Files'
       ),
     },
@@ -338,6 +361,29 @@ const HomeScreen = () => {
     </Modal>
   );
 
+  const renderRecentFile = ({ item }: { item: RecentFile }) => (
+    <TouchableOpacity
+      style={styles.recentFileItem}
+      onPress={() => handleFilePress(item)}
+    >
+      <Ionicons
+        name={item.isFile ? 'document' : 'folder'}
+        size={24}
+        color="#007AFF"
+      />
+      <View style={styles.recentFileInfo}>
+        <Text style={styles.recentFileName} numberOfLines={1}>
+          {item.name}
+        </Text>
+        <Text style={styles.recentFileDetails}>
+          {item.isFile ? formatFileSize(item.size || 0) : 'Folder'} • 
+          {new Date(item.lastAccessed).toLocaleDateString()}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color="#8E8E93" />
+    </TouchableOpacity>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: '#111' }]}> {/* Force dark background */}
       <ScrollView 
@@ -356,14 +402,6 @@ const HomeScreen = () => {
           >
             <MaterialIcons name="search" size={22} color="#6EC1E4" />
             <Text style={styles.searchBtnText}>Search files</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.recentFilesBtn}
-            onPress={() => navigation.navigate('FileExplorer', { initialPath: FileSystem.documentDirectory || '', title: 'Recent Files' })}
-          >
-            <MaterialIcons name="access-time" size={22} color="#B5E61D" />
-            <Text style={styles.recentFilesText}>Recent files</Text>
           </TouchableOpacity>
         </View>
 
@@ -394,7 +432,7 @@ const HomeScreen = () => {
         <View style={styles.bottomSection}>
           <TouchableOpacity
             style={styles.bottomBtn}
-            onPress={() => Alert.alert('Recycle Bin', 'This feature is not yet implemented.')}
+            onPress={() => navigation.navigate('RecycleBin')}
           >
             <MaterialIcons name="delete" size={22} color="#B5E61D" />
             <Text style={styles.bottomBtnText}>Recycle bin</Text>
@@ -409,6 +447,18 @@ const HomeScreen = () => {
         </View>
 
         {renderSearchModal()}
+
+        <View style={styles.recentFilesSection}>
+          <Text style={styles.recentFilesTitle}>Recent Files</Text>
+          {recentFiles.length > 0 ? (
+            recentFiles.map((file) => renderRecentFile({ item: file }))
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Ionicons name="time-outline" size={48} color="#8E8E93" />
+              <Text style={styles.emptyText}>No recent files</Text>
+            </View>
+          )}
+        </View>
       </ScrollView>
     </View>
   );
@@ -594,6 +644,46 @@ const styles = StyleSheet.create({
     color: '#555',
     fontSize: 16,
     marginTop: 12,
+  },
+  recentFilesSection: {
+    marginHorizontal: 12,
+    marginTop: 28,
+  },
+  recentFilesTitle: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 12,
+  },
+  recentFileItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  recentFileInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  recentFileName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 4,
+  },
+  recentFileDetails: {
+    fontSize: 14,
+    color: '#8E8E93',
   },
 });
 

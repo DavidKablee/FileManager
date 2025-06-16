@@ -118,10 +118,22 @@ export const deleteItem = async (path: string): Promise<void> => {
       throw new Error('Item does not exist');
     }
 
+    // For directories, we need to handle them differently
     if (info.isDirectory) {
-      await FileSystem.deleteAsync(path, { idempotent: true });
+      // First, get all items in the directory
+      const items = await FileSystem.readDirectoryAsync(path);
+      
+      // Move each item to the recycle bin
+      for (const item of items) {
+        const itemPath = `${path}/${item}`;
+        await moveToRecycleBin(itemPath);
+      }
+      
+      // Finally, move the empty directory to the recycle bin
+      await moveToRecycleBin(path);
     } else {
-      await FileSystem.deleteAsync(path);
+      // For files, just move them to the recycle bin
+      await moveToRecycleBin(path);
     }
   } catch (error) {
     console.error('Error deleting item:', error);
@@ -278,4 +290,12 @@ export const formatBytesToGB = (bytes: number) => {
   if (bytes === 0) return '0 GB';
   const gb = bytes / (1024 * 1024 * 1024);
   return `${gb.toFixed(2)} GB`;
+};
+
+export const formatFileSize = (bytes: number): string => {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }; 
