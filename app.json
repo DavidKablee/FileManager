@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "360FileManager",
-    "slug": "MyFileManager",
+    "name": "360 File Manager",
+    "slug": "360-file-manager",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "assets/logo.png",
@@ -36,7 +36,7 @@
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.INTERNET"
       ],
-      "package": "com.david.filemanager"
+      "package": "com.filemanager360"
     },
     "web": {
       "favicon": "./assets/logo.png"

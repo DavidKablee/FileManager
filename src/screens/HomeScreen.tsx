@@ -6,9 +6,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as FileSystem from 'expo-file-system';
-import { searchItems } from '../utils/FileManagement';
+import { searchItems, checkAndRequestPermissions, checkPermissionsStatus, hasFullFileAccess, requestFullFileAccess, getAllStorageLocations, isPathAccessible, showFullAccessInstructions } from '../utils/FileManagement';
 import { getRecentFiles, RecentFile } from '../utils/RecentFiles';
 import { formatFileSize } from '../utils/FileManagement';
+import RNFS from 'react-native-fs';
 
 type RootStackParamList = {
   Home: undefined;
@@ -39,48 +40,84 @@ const HomeScreen = () => {
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
+  const [permissionsGranted, setPermissionsGranted] = useState(false);
+  const [hasFullAccess, setHasFullAccess] = useState(false);
+  const [storageLocations, setStorageLocations] = useState<string[]>([]);
 
   useEffect(() => {
-    const getStorageInfo = async () => {
+    const initializeApp = async () => {
       try {
-        // Get the internal storage path based on platform
-        const internalStoragePath = Platform.OS === 'android' 
-          ? '/storage/emulated/0'  // Android internal storage path
-          : FileSystem.documentDirectory; // iOS uses app's document directory
-
-        // Get storage info
-        const freeDiskStorage = await FileSystem.getFreeDiskStorageAsync();
-        const totalDiskCapacity = await FileSystem.getTotalDiskCapacityAsync();
-
-        setInternalStorage(
-          `${formatBytesToGB(totalDiskCapacity - freeDiskStorage)} / ${formatBytesToGB(totalDiskCapacity)}`
-        );
-
-        // Store the internal storage path for later use
-        if (Platform.OS === 'android') {
-          // Check if we can access the internal storage
-          try {
-            const testPath = `${internalStoragePath}/DCIM`;
-            const dirInfo = await FileSystem.getInfoAsync(testPath);
-            if (!dirInfo.exists) {
-              Alert.alert(
-                'Storage Access',
-                'Please grant storage permissions to access internal storage.',
-                [{ text: 'OK' }]
-              );
-            }
-          } catch (error) {
-            console.warn('Storage access error:', error);
-          }
+        // Check and request permissions on app start
+        const permissions = await checkAndRequestPermissions();
+        setPermissionsGranted(permissions);
+        
+        // Check for full file access
+        const fullAccess = await hasFullFileAccess();
+        setHasFullAccess(fullAccess);
+        
+        // Get all storage locations
+        const locations = await getAllStorageLocations();
+        setStorageLocations(locations);
+        
+        if (permissions) {
+          // Only load storage info and recent files if permissions are granted
+          await getStorageInfo();
+          await loadRecentFiles();
+        } else {
+          // Show permission warning
+          Alert.alert(
+            'Permissions Required',
+            'This file manager needs storage permissions to work properly. Please grant the required permissions.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Open Settings',
+                onPress: () => Linking.openSettings(),
+              },
+            ]
+          );
         }
       } catch (error) {
-        console.error('Error getting storage info:', error);
-        setInternalStorage('Error');
+        console.error('Error initializing app:', error);
       }
     };
 
-    getStorageInfo();
+    initializeApp();
   }, []);
+
+  const getStorageInfo = async () => {
+    try {
+      // Get the internal storage path based on platform
+      const internalStoragePath = Platform.OS === 'android' 
+        ? '/storage/emulated/0'  // Android internal storage path
+        : FileSystem.documentDirectory; // iOS uses app's document directory
+
+      // Get storage info
+      const freeDiskStorage = await FileSystem.getFreeDiskStorageAsync();
+      const totalDiskCapacity = await FileSystem.getTotalDiskCapacityAsync();
+
+      setInternalStorage(
+        `${formatBytesToGB(totalDiskCapacity - freeDiskStorage)} / ${formatBytesToGB(totalDiskCapacity)}`
+      );
+
+      // Store the internal storage path for later use
+      if (Platform.OS === 'android') {
+        // Check if we can access the internal storage
+        try {
+          const testPath = `${internalStoragePath}/DCIM`;
+          const dirInfo = await FileSystem.getInfoAsync(testPath);
+          if (!dirInfo.exists) {
+            console.warn('DCIM directory not accessible');
+          }
+        } catch (error) {
+          console.warn('Storage access error:', error);
+        }
+      }
+    } catch (error) {
+      console.error('Error getting storage info:', error);
+      setInternalStorage('Error');
+    }
+  };
 
   useEffect(() => {
     loadRecentFiles();
@@ -106,46 +143,98 @@ const HomeScreen = () => {
       icon: <View><MaterialIcons name="smartphone" size={22} color="#6EC1E4" /></View>, 
       label: 'Internal storage', 
       value: internalStorage,
-      onPress: () => navigation.navigate('FileExplorer', {
-        initialPath: Platform.OS === 'android' ? '/storage/emulated/0' : FileSystem.documentDirectory || '',
-        title: 'Internal Storage'
-      }),
+      onPress: async () => {
+        if (!permissionsGranted) {
+          const granted = await checkAndRequestPermissions();
+          if (!granted) {
+            Alert.alert(
+              'Permission Required',
+              'Please grant storage permissions to access internal storage.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Open Settings', onPress: () => Linking.openSettings() },
+              ]
+            );
+            return;
+          }
+          setPermissionsGranted(true);
+        }
+        navigation.navigate('FileExplorer', {
+          initialPath: Platform.OS === 'android' ? '/storage/emulated/0' : FileSystem.documentDirectory || '',
+          title: 'Internal Storage'
+        });
+      },
     },
     {
       icon: <View><MaterialIcons name="sd-card" size={22} color="#A084E8" /></View>, 
       label: 'SD card', 
       value: sdCardStorage,
-      onPress: () => Alert.alert('SD Card', 'SD card functionality not implemented yet.')
+      onPress: async () => {
+        if (!permissionsGranted) {
+          const granted = await checkAndRequestPermissions();
+          if (!granted) {
+            Alert.alert(
+              'Permission Required',
+              'Please grant storage permissions to access SD card.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Open Settings', onPress: () => Linking.openSettings() },
+              ]
+            );
+            return;
+          }
+          setPermissionsGranted(true);
+        }
+        
+        // Check if SD card is available
+        const sdCardPath = '/storage/sdcard1';
+        const sdCardExists = await isPathAccessible(sdCardPath);
+        if (sdCardExists) {
+          navigation.navigate('FileExplorer', {
+            initialPath: sdCardPath,
+            title: 'SD Card'
+          });
+        } else {
+          Alert.alert('SD Card', 'SD card not found or not accessible.');
+        }
+      },
     },
   ];
 
   const handleCategoryPress = async (path: string, title: string) => {
     try {
-      // Check if we can access the directory
-      const dirInfo = await FileSystem.getInfoAsync(path);
-      
-      if (!dirInfo.exists) {
-        // Try to create the directory if it doesn't exist
-        try {
-          await FileSystem.makeDirectoryAsync(path, { intermediates: true });
-        } catch (error) {
-          console.warn(`Could not create directory ${path}:`, error);
+      // Check permissions first
+      if (!permissionsGranted) {
+        const granted = await checkAndRequestPermissions();
+        if (!granted) {
           Alert.alert(
-            'Access Denied',
-            `Unable to access ${title}. Please make sure you have granted the necessary permissions.`,
+            'Permission Required',
+            'Please grant storage permissions to access files.',
             [
               { text: 'Cancel', style: 'cancel' },
-              { 
-                text: 'Open Settings', 
-                onPress: () => {
-                  if (Platform.OS === 'ios') {
-                    Linking.openURL('app-settings:');
-                  } else {
-                    Linking.openSettings();
-                  }
-                }
-              }
+              { text: 'Open Settings', onPress: () => Linking.openSettings() },
             ]
+          );
+          return;
+        }
+        setPermissionsGranted(true);
+      }
+
+      // Check if path is accessible
+      const isAccessible = await isPathAccessible(path);
+      if (!isAccessible) {
+        // Check if we have full file access
+        const fullAccess = await hasFullFileAccess();
+        
+        if (!fullAccess) {
+          showFullAccessInstructions();
+          return;
+        } else {
+          // We have full access but still can't access the path
+          Alert.alert(
+            'Access Denied',
+            `Cannot access ${title}. This location may be restricted or not exist on your device.`,
+            [{ text: 'OK' }]
           );
           return;
         }
@@ -158,23 +247,18 @@ const HomeScreen = () => {
       });
     } catch (error) {
       console.error('Error accessing directory:', error);
-      Alert.alert(
-        'Error',
-        `Unable to access ${title}. Please make sure you have granted the necessary permissions.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Open Settings', 
-            onPress: () => {
-              if (Platform.OS === 'ios') {
-                Linking.openURL('app-settings:');
-              } else {
-                Linking.openSettings();
-              }
-            }
-          }
-        ]
-      );
+      
+      // Check if it's a permission error
+      const fullAccess = await hasFullFileAccess();
+      if (!fullAccess) {
+        showFullAccessInstructions();
+      } else {
+        Alert.alert(
+          'Error',
+          `Unable to access ${title}. This location may be restricted or not exist on your device.`,
+          [{ text: 'OK' }]
+        );
+      }
     }
   };
 
@@ -384,6 +468,17 @@ const HomeScreen = () => {
     </TouchableOpacity>
   );
 
+  const listFiles = async () => {
+    try {
+      const files = await RNFS.readDir('/storage/emulated/0/');
+      console.log('Files:', files);
+      Alert.alert('Files', files.map(f => f.name).join('\n'));
+    } catch (error) {
+      console.error('Error listing files:', error);
+      Alert.alert('Error', 'Could not list files from root storage.');
+    }
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: '#111' }]}> {/* Force dark background */}
       <ScrollView 
@@ -393,6 +488,49 @@ const HomeScreen = () => {
       >
         {/* Title */}
         <Text style={styles.title}>My Files</Text>
+
+        {/* Permission Status Indicator */}
+        {!permissionsGranted && (
+          <View style={styles.permissionWarning}>
+            <MaterialIcons name="warning" size={20} color="#FF9500" />
+            <Text style={styles.permissionWarningText}>
+              Storage permissions required for full functionality
+            </Text>
+            <TouchableOpacity
+              style={styles.permissionButton}
+              onPress={async () => {
+                const granted = await checkAndRequestPermissions();
+                if (granted) {
+                  setPermissionsGranted(true);
+                  await getStorageInfo();
+                  await loadRecentFiles();
+                }
+              }}
+            >
+              <Text style={styles.permissionButtonText}>Grant Permissions</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Full Access Status Indicator */}
+        {permissionsGranted && !hasFullAccess && (
+          <View style={[styles.permissionWarning, { backgroundColor: '#007AFF' }]}>
+            <MaterialIcons name="info" size={20} color="#fff" />
+            <Text style={[styles.permissionWarningText, { color: '#fff' }]}>
+              Enable "All files access" for complete file manager
+            </Text>
+            <TouchableOpacity
+              style={[styles.permissionButton, { backgroundColor: '#fff' }]}
+              onPress={async () => {
+                showFullAccessInstructions();
+                const fullAccess = await hasFullFileAccess();
+                setHasFullAccess(fullAccess);
+              }}
+            >
+              <Text style={[styles.permissionButtonText, { color: '#007AFF' }]}>Enable</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Search and Recent files buttons */}
         <View style={styles.topButtonsContainer}>
@@ -425,8 +563,12 @@ const HomeScreen = () => {
                 <Text style={styles.storageValue}>{item.value}</Text>
               </View>
             </View>
-            ))}
-          </View>
+          ))}
+          <TouchableOpacity style={styles.bottomBtn} onPress={listFiles}>
+            <MaterialIcons name="folder" size={22} color="#6EC1E4" />
+            <Text style={styles.bottomBtnText}>List Root Files</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Recycle bin & Analyse storage */}
         <View style={styles.bottomSection}>
@@ -684,6 +826,33 @@ const styles = StyleSheet.create({
   recentFileDetails: {
     fontSize: 14,
     color: '#8E8E93',
+  },
+  permissionWarning: {
+    backgroundColor: '#FF9500',
+    borderRadius: 12,
+    padding: 15,
+    marginHorizontal: 12,
+    marginBottom: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  permissionWarningText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  permissionButton: {
+    backgroundColor: '#000',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+  },
+  permissionButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

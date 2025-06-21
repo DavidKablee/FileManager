@@ -1,5 +1,7 @@
 import * as FileSystem from 'expo-file-system';
-import { Platform } from 'react-native';
+import { Platform, PermissionsAndroid, Alert, Linking } from 'react-native';
+import * as MediaLibrary from 'expo-media-library';
+import RNFS from 'react-native-fs';
 
 export interface FileItem {
   name: string;
@@ -8,6 +10,9 @@ export interface FileItem {
   size: number;
   modifiedTime: string;
   itemCount?: number;
+  permissions?: string;
+  owner?: string;
+  group?: string;
 }
 
 // Get the base storage path based on platform
@@ -17,31 +22,60 @@ export const getBaseStoragePath = () => {
     : FileSystem.documentDirectory; // iOS uses app's document directory
 };
 
-// Function to get file info
+// Enhanced function to get file info with detailed stats
 export const getFileInfo = async (path: string): Promise<FileItem> => {
   try {
-    const fileInfo = await FileSystem.getInfoAsync(path);
-    if (!fileInfo.exists) {
-      throw new Error('File does not exist');
+    if (Platform.OS === 'android') {
+      // Use RNFS for better Android file access
+      const stats = await RNFS.stat(path);
+      const isDirectory = stats.isDirectory();
+      
+      let itemCount = 0;
+      if (isDirectory) {
+        try {
+          const files = await RNFS.readDir(path);
+          itemCount = files.length;
+        } catch (error) {
+          console.warn(`Could not read directory ${path}:`, error);
+        }
+      }
+
+      return {
+        name: path.split('/').pop() || '',
+        path: path,
+        isDirectory,
+        size: stats.size,
+        modifiedTime: new Date(stats.mtime).toISOString(),
+        itemCount: isDirectory ? itemCount : undefined,
+        permissions: stats.mode,
+        owner: stats.owner,
+        group: stats.group
+      };
+    } else {
+      // Use Expo FileSystem for iOS
+      const fileInfo = await FileSystem.getInfoAsync(path);
+      if (!fileInfo.exists) {
+        throw new Error('File does not exist');
+      }
+
+      const stats = await FileSystem.getInfoAsync(path, { size: true });
+      const isDirectory = fileInfo.isDirectory;
+      let itemCount = 0;
+
+      if (isDirectory) {
+        const files = await FileSystem.readDirectoryAsync(path);
+        itemCount = files.length;
+      }
+
+      return {
+        name: path.split('/').pop() || '',
+        path: path,
+        isDirectory,
+        size: 'size' in stats ? stats.size : 0,
+        modifiedTime: new Date().toISOString(),
+        itemCount: isDirectory ? itemCount : undefined
+      };
     }
-
-    const stats = await FileSystem.getInfoAsync(path, { size: true });
-    const isDirectory = fileInfo.isDirectory;
-    let itemCount = 0;
-
-    if (isDirectory) {
-      const files = await FileSystem.readDirectoryAsync(path);
-      itemCount = files.length;
-    }
-
-    return {
-      name: path.split('/').pop() || '',
-      path: path,
-      isDirectory,
-      size: 'size' in stats ? stats.size : 0,
-      modifiedTime: new Date().toISOString(),
-      itemCount: isDirectory ? itemCount : undefined
-    };
   } catch (error) {
     console.error('Error getting file info:', error);
     throw error;
@@ -51,89 +85,146 @@ export const getFileInfo = async (path: string): Promise<FileItem> => {
 // Function to read directory contents
 export const readDirectory = async (path: string): Promise<FileItem[]> => {
   try {
-    const files = await FileSystem.readDirectoryAsync(path);
-    const fileItems: FileItem[] = [];
+    if (Platform.OS === 'android') {
+      // Use RNFS for better Android file access
+      const files = await RNFS.readDir(path);
+      const fileItems: FileItem[] = [];
 
-    for (const file of files) {
-      const fullPath = `${path}/${file}`;
-      try {
-        const fileInfo = await getFileInfo(fullPath);
-        fileItems.push(fileInfo);
-      } catch (error) {
-        console.warn(`Error getting info for ${file}:`, error);
+      for (const file of files) {
+        try {
+          const stats = await RNFS.stat(file.path);
+          const isDirectory = stats.isDirectory();
+          
+          let itemCount = 0;
+          if (isDirectory) {
+            try {
+              const subFiles = await RNFS.readDir(file.path);
+              itemCount = subFiles.length;
+            } catch (error) {
+              console.warn(`Could not read subdirectory ${file.path}:`, error);
+            }
+          }
+
+          fileItems.push({
+            name: file.name,
+            path: file.path,
+            isDirectory,
+            size: stats.size,
+            modifiedTime: new Date(stats.mtime).toISOString(),
+            itemCount: isDirectory ? itemCount : undefined
+          });
+        } catch (error) {
+          console.warn(`Error getting info for ${file.name}:`, error);
+        }
       }
-    }
 
-    return fileItems.sort((a, b) => {
-      // Directories first
-      if (a.isDirectory && !b.isDirectory) return -1;
-      if (!a.isDirectory && b.isDirectory) return 1;
-      // Then alphabetically
-      return a.name.localeCompare(b.name);
-    });
+      return fileItems.sort((a, b) => {
+        // Directories first
+        if (a.isDirectory && !b.isDirectory) return -1;
+        if (!a.isDirectory && b.isDirectory) return 1;
+        // Then alphabetically
+        return a.name.localeCompare(b.name);
+      });
+    } else {
+      // Use Expo FileSystem for iOS
+      const files = await FileSystem.readDirectoryAsync(path);
+      const fileItems: FileItem[] = [];
+
+      for (const file of files) {
+        const fullPath = `${path}/${file}`;
+        try {
+          const fileInfo = await getFileInfo(fullPath);
+          fileItems.push(fileInfo);
+        } catch (error) {
+          console.warn(`Error getting info for ${file}:`, error);
+        }
+      }
+
+      return fileItems.sort((a, b) => {
+        // Directories first
+        if (a.isDirectory && !b.isDirectory) return -1;
+        if (!a.isDirectory && b.isDirectory) return 1;
+        // Then alphabetically
+        return a.name.localeCompare(b.name);
+      });
+    }
   } catch (error) {
     console.error('Error reading directory:', error);
     throw error;
   }
 };
 
-// Function to create a new file
+// Enhanced function to create a new file
 export const createFile = async (path: string, content: string = ''): Promise<void> => {
   try {
-    await FileSystem.writeAsStringAsync(path, content);
+    if (Platform.OS === 'android') {
+      await RNFS.writeFile(path, content, 'utf8');
+    } else {
+      await FileSystem.writeAsStringAsync(path, content);
+    }
   } catch (error) {
     console.error('Error creating file:', error);
     throw error;
   }
 };
 
-// Function to create a new directory
+// Enhanced function to create a new directory
 export const createDirectory = async (path: string): Promise<void> => {
   try {
-    await FileSystem.makeDirectoryAsync(path, { intermediates: true });
+    if (Platform.OS === 'android') {
+      await RNFS.mkdir(path);
+    } else {
+      await FileSystem.makeDirectoryAsync(path, { intermediates: true });
+    }
   } catch (error) {
     console.error('Error creating directory:', error);
     throw error;
   }
 };
 
-// Function to rename a file or directory
+// Enhanced function to rename a file or directory
 export const renameItem = async (oldPath: string, newPath: string): Promise<void> => {
   try {
-    await FileSystem.moveAsync({
-      from: oldPath,
-      to: newPath
-    });
+    if (Platform.OS === 'android') {
+      await RNFS.moveFile(oldPath, newPath);
+    } else {
+      await FileSystem.moveAsync({
+        from: oldPath,
+        to: newPath
+      });
+    }
   } catch (error) {
     console.error('Error renaming item:', error);
     throw error;
   }
 };
 
-// Function to delete a file or directory
+// Enhanced function to delete a file or directory
 export const deleteItem = async (path: string): Promise<void> => {
   try {
-    const info = await FileSystem.getInfoAsync(path);
-    if (!info.exists) {
-      throw new Error('Item does not exist');
-    }
-
-    // For directories, we need to handle them differently
-    if (info.isDirectory) {
-      // First, get all items in the directory
-      const items = await FileSystem.readDirectoryAsync(path);
-      
-      // Move each item to the recycle bin
-      for (const item of items) {
-        const itemPath = `${path}/${item}`;
-        await moveToRecycleBin(itemPath);
+    if (Platform.OS === 'android') {
+      const stats = await RNFS.stat(path);
+      if (stats.isDirectory()) {
+        await RNFS.unlink(path);
+      } else {
+        await RNFS.unlink(path);
       }
-      
-      // Finally, move the empty directory to the recycle bin
-      await moveToRecycleBin(path);
     } else {
-      // For files, just move them to the recycle bin
-      await moveToRecycleBin(path);
+      const info = await FileSystem.getInfoAsync(path);
+      if (!info.exists) {
+        throw new Error('Item does not exist');
+      }
+
+      if (info.isDirectory) {
+        const items = await FileSystem.readDirectoryAsync(path);
+        for (const item of items) {
+          const itemPath = `${path}/${item}`;
+          await moveToRecycleBin(itemPath);
+        }
+        await moveToRecycleBin(path);
+      } else {
+        await moveToRecycleBin(path);
+      }
     }
   } catch (error) {
     console.error('Error deleting item:', error);
@@ -225,37 +316,139 @@ export const createFolder = async (parentPath: string, folderName: string) => {
   }
 };
 
-export const copyItem = async (fromPath: string, toPath: string, overwrite: boolean = false) => {
+// Enhanced function to copy files/directories
+export const copyItem = async (fromPath: string, toPath: string, overwrite: boolean = false): Promise<void> => {
   try {
-    const toInfo = await FileSystem.getInfoAsync(toPath);
-    if (toInfo.exists && !overwrite) {
-      throw new Error(`Item already exists at ${toPath}. Set overwrite to true to replace.`);
+    if (Platform.OS === 'android') {
+      const stats = await RNFS.stat(fromPath);
+      if (stats.isDirectory()) {
+        await RNFS.copyFile(fromPath, toPath);
+      } else {
+        await RNFS.copyFile(fromPath, toPath);
+      }
+    } else {
+      // Use Expo FileSystem for iOS
+      const content = await FileSystem.readAsStringAsync(fromPath);
+      await FileSystem.writeAsStringAsync(toPath, content);
     }
-    await FileSystem.copyAsync({
-      from: fromPath,
-      to: toPath,
-    });
-    return toPath;
-  } catch (error: any) {
-    console.error(`Error copying ${fromPath} to ${toPath}:`, error);
-    throw new Error(`Failed to copy item: ${error.message}`);
+  } catch (error) {
+    console.error('Error copying item:', error);
+    throw error;
   }
 };
 
-export const moveItem = async (fromPath: string, toPath: string, overwrite: boolean = false) => {
+// Enhanced function to move files/directories
+export const moveItem = async (fromPath: string, toPath: string, overwrite: boolean = false): Promise<void> => {
   try {
-    const toInfo = await FileSystem.getInfoAsync(toPath);
-    if (toInfo.exists && !overwrite) {
-      throw new Error(`Item already exists at ${toPath}. Set overwrite to true to replace.`);
+    if (Platform.OS === 'android') {
+      await RNFS.moveFile(fromPath, toPath);
+    } else {
+      await FileSystem.moveAsync({
+        from: fromPath,
+        to: toPath
+      });
     }
-    await FileSystem.moveAsync({
-      from: fromPath,
-      to: toPath,
-    });
-    return toPath;
-  } catch (error: any) {
-    console.error(`Error moving ${fromPath} to ${toPath}:`, error);
-    throw new Error(`Failed to move item: ${error.message}`);
+  } catch (error) {
+    console.error('Error moving item:', error);
+    throw error;
+  }
+};
+
+// Function to get all available storage paths on Android
+export const getAvailableStoragePaths = async (): Promise<string[]> => {
+  if (Platform.OS !== 'android') {
+    return [FileSystem.documentDirectory || ''];
+  }
+
+  try {
+    const paths: string[] = [];
+    
+    // Internal storage
+    paths.push('/storage/emulated/0');
+    
+    // Check for SD card
+    try {
+      const sdCardPath = '/storage/sdcard1';
+      const sdCardExists = await RNFS.exists(sdCardPath);
+      if (sdCardExists) {
+        paths.push(sdCardPath);
+      }
+    } catch (error) {
+      console.warn('SD card not found:', error);
+    }
+
+    // Check for external storage
+    try {
+      const externalPath = '/storage/emulated/0/Android/data';
+      const externalExists = await RNFS.exists(externalPath);
+      if (externalExists) {
+        paths.push(externalPath);
+      }
+    } catch (error) {
+      console.warn('External storage not accessible:', error);
+    }
+
+    return paths;
+  } catch (error) {
+    console.error('Error getting storage paths:', error);
+    return ['/storage/emulated/0'];
+  }
+};
+
+// Function to check if a path is accessible
+export const isPathAccessible = async (path: string): Promise<boolean> => {
+  try {
+    if (Platform.OS === 'android') {
+      // Use RNFS for better Android file access
+      const exists = await RNFS.exists(path);
+      if (!exists) {
+        return false;
+      }
+      
+      // Try to read the directory to ensure we have access
+      try {
+        await RNFS.readDir(path);
+        return true;
+      } catch (readError) {
+        console.warn(`Cannot read directory ${path}:`, readError);
+        return false;
+      }
+    } else {
+      const info = await FileSystem.getInfoAsync(path);
+      return info.exists;
+    }
+  } catch (error) {
+    console.warn(`Path ${path} not accessible:`, error);
+    return false;
+  }
+};
+
+// Function to get file permissions (Android only)
+export const getFilePermissions = async (path: string): Promise<string> => {
+  if (Platform.OS !== 'android') {
+    return '';
+  }
+
+  try {
+    const stats = await RNFS.stat(path);
+    return stats.mode;
+  } catch (error) {
+    console.error('Error getting file permissions:', error);
+    return '';
+  }
+};
+
+// Function to set file permissions (Android only)
+export const setFilePermissions = async (path: string, permissions: string): Promise<void> => {
+  if (Platform.OS !== 'android') {
+    return;
+  }
+
+  try {
+    await RNFS.chmod(path, permissions);
+  } catch (error) {
+    console.error('Error setting file permissions:', error);
+    throw error;
   }
 };
 
@@ -298,4 +491,372 @@ export const formatFileSize = (bytes: number): string => {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+}; 
+
+/**
+ * Comprehensive permission checker for file manager functionality
+ * Handles both Android 13+ and older versions
+ */
+export const checkAndRequestPermissions = async (): Promise<boolean> => {
+  try {
+    if (Platform.OS === 'android') {
+      // For Android 13+ (API 33+), we need different permissions
+      if (Platform.Version >= 33) {
+        // Request READ_MEDIA_* permissions for Android 13+
+        const permissions = [
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_AUDIO,
+        ];
+
+        const results = await PermissionsAndroid.requestMultiple(permissions);
+        
+        // Check if all permissions are granted
+        const allGranted = Object.values(results).every(
+          result => result === PermissionsAndroid.RESULTS.GRANTED
+        );
+
+        if (!allGranted) {
+          Alert.alert(
+            'Permission Required',
+            'This file manager needs access to your media files. For full access to all files, please grant "All files access" in your device settings.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Open Settings',
+                onPress: () => Linking.openSettings(),
+              },
+            ]
+          );
+          return false;
+        }
+
+        // For Android 13+, also request MANAGE_EXTERNAL_STORAGE for full access
+        // Note: This requires special handling as it's not available in PermissionsAndroid
+        Alert.alert(
+          'Full Access Required',
+          'For complete file manager functionality, please grant "All files access" permission in your device settings:\n\n1. Go to Settings > Apps > File Manager\n2. Tap "Permissions"\n3. Enable "All files access"',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Open Settings',
+              onPress: () => Linking.openSettings(),
+            },
+          ]
+        );
+
+        return true;
+      } else {
+        // For Android 12 and below, use the old permissions
+        const readGranted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+          {
+            title: 'Storage Access Required',
+            message: 'This file manager needs access to your files to work properly.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+        
+        const writeGranted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+          {
+            title: 'Storage Access Required',
+            message: 'This file manager needs access to your files to work properly.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+
+        if (readGranted !== PermissionsAndroid.RESULTS.GRANTED || 
+            writeGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert(
+            'Permission Required',
+            'Please grant storage permissions to use this file manager.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Open Settings',
+                onPress: () => Linking.openSettings(),
+              },
+            ]
+          );
+          return false;
+        }
+
+        // For older Android versions, also request MANAGE_EXTERNAL_STORAGE
+        Alert.alert(
+          'Full Access Required',
+          'For complete file manager functionality, please grant "All files access" permission in your device settings:\n\n1. Go to Settings > Apps > File Manager\n2. Tap "Permissions"\n3. Enable "All files access"',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Open Settings',
+              onPress: () => Linking.openSettings(),
+            },
+          ]
+        );
+      }
+
+      // Request media library permissions
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Media Library Permission Required',
+          'Please grant media library permission to access your media files.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Open Settings',
+              onPress: () => Linking.openSettings(),
+            },
+          ]
+        );
+        return false;
+      }
+
+      return true;
+    }
+
+    // For iOS, permissions are handled differently
+    return true;
+  } catch (error) {
+    console.error('Error checking permissions:', error);
+    return false;
+  }
+};
+
+/**
+ * Check if all required permissions are granted
+ */
+export const checkPermissionsStatus = async (): Promise<{
+  storage: boolean;
+  media: boolean;
+  allGranted: boolean;
+}> => {
+  try {
+    if (Platform.OS === 'android') {
+      let storageGranted = false;
+      
+      if (Platform.Version >= 33) {
+        // Check Android 13+ permissions
+        const permissions = [
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
+          PermissionsAndroid.PERMISSIONS.READ_MEDIA_AUDIO,
+        ];
+
+        const results = await PermissionsAndroid.requestMultiple(permissions);
+        storageGranted = Object.values(results).every(
+          result => result === PermissionsAndroid.RESULTS.GRANTED
+        );
+      } else {
+        // Check older Android permissions
+        const readStatus = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE
+        );
+        const writeStatus = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
+        );
+        storageGranted = readStatus && writeStatus;
+      }
+
+      // Check media library permission
+      const { status } = await MediaLibrary.getPermissionsAsync();
+      const mediaGranted = status === 'granted';
+
+      return {
+        storage: storageGranted,
+        media: mediaGranted,
+        allGranted: storageGranted && mediaGranted,
+      };
+    }
+
+    return {
+      storage: true,
+      media: true,
+      allGranted: true,
+    };
+  } catch (error) {
+    console.error('Error checking permission status:', error);
+    return {
+      storage: false,
+      media: false,
+      allGranted: false,
+    };
+  }
+}; 
+
+// Function to check if app has full file access (MANAGE_EXTERNAL_STORAGE)
+export const hasFullFileAccess = async (): Promise<boolean> => {
+  if (Platform.OS !== 'android') {
+    return true;
+  }
+
+  try {
+    // Test multiple paths that require full access
+    const testPaths = [
+      '/storage/emulated/0/Android/data',
+      '/storage/emulated/0/Android/obb',
+      '/storage/emulated/0/Android/media'
+    ];
+    
+    for (const testPath of testPaths) {
+      try {
+        const exists = await RNFS.exists(testPath);
+        if (exists) {
+          // Try to read the directory to ensure we have access
+          try {
+            await RNFS.readDir(testPath);
+            console.log(`Full file access confirmed via ${testPath}`);
+            return true;
+          } catch (readError) {
+            console.warn(`Cannot read ${testPath}:`, readError);
+          }
+        }
+      } catch (error) {
+        console.warn(`Cannot access ${testPath}:`, error);
+      }
+    }
+    
+    console.warn('Full file access not available');
+    return false;
+  } catch (error) {
+    console.warn('Error checking full file access:', error);
+    return false;
+  }
+};
+
+// Function to request full file access
+export const requestFullFileAccess = async (): Promise<boolean> => {
+  if (Platform.OS !== 'android') {
+    return true;
+  }
+
+  try {
+    Alert.alert(
+      'Full File Access Required',
+      'To access all files on your device like a default file manager, please grant "All files access" permission:\n\n1. Go to Settings > Apps > File Manager\n2. Tap "Permissions"\n3. Enable "All files access"\n4. Return to this app',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Open Settings',
+          onPress: () => Linking.openSettings(),
+        },
+        {
+          text: 'Check Again',
+          onPress: async () => {
+            const hasAccess = await hasFullFileAccess();
+            if (hasAccess) {
+              Alert.alert('Success', 'Full file access granted!');
+            } else {
+              Alert.alert('Access Denied', 'Please grant "All files access" permission in settings.');
+            }
+          },
+        },
+      ]
+    );
+    return false;
+  } catch (error) {
+    console.error('Error requesting full file access:', error);
+    return false;
+  }
+};
+
+// Function to show detailed instructions for enabling full file access
+export const showFullAccessInstructions = () => {
+  const instructions = Platform.OS === 'android' && Platform.Version >= 30 
+    ? `To enable "All files access" on Android 11+:\n\n1. Go to Settings > Apps > File Manager\n2. Tap "Permissions"\n3. Find "All files access" or "Files and media"\n4. Enable "Allow management of all files"\n5. Return to this app`
+    : `To enable full file access:\n\n1. Go to Settings > Apps > File Manager\n2. Tap "Permissions"\n3. Enable "Storage" or "Files and media"\n4. Return to this app`;
+
+  Alert.alert(
+    'Full File Access Required',
+    instructions,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Open Settings',
+        onPress: () => Linking.openSettings(),
+      },
+      {
+        text: 'Check Again',
+        onPress: async () => {
+          const hasAccess = await hasFullFileAccess();
+          if (hasAccess) {
+            Alert.alert('Success', 'Full file access is now enabled!');
+          } else {
+            Alert.alert('Access Denied', 'Please enable "All files access" permission in settings.');
+          }
+        },
+      },
+    ]
+  );
+};
+
+// Function to get all accessible storage locations
+export const getAllStorageLocations = async (): Promise<string[]> => {
+  if (Platform.OS !== 'android') {
+    return [FileSystem.documentDirectory || ''];
+  }
+
+  const locations: string[] = [];
+  
+  try {
+    // Internal storage
+    locations.push('/storage/emulated/0');
+    
+    // Check for SD card
+    try {
+      const sdCardPath = '/storage/sdcard1';
+      const exists = await RNFS.exists(sdCardPath);
+      if (exists) {
+        locations.push(sdCardPath);
+      }
+    } catch (error) {
+      console.warn('SD card not accessible:', error);
+    }
+
+    // Check for external storage
+    try {
+      const externalPath = '/storage/emulated/0/Android/data';
+      const exists = await RNFS.exists(externalPath);
+      if (exists) {
+        locations.push(externalPath);
+      }
+    } catch (error) {
+      console.warn('External storage not accessible:', error);
+    }
+
+    // Check for system directories if we have full access
+    const hasFullAccess = await hasFullFileAccess();
+    if (hasFullAccess) {
+      try {
+        const systemPaths = [
+          '/system',
+          '/data',
+          '/cache',
+          '/storage/emulated/0/Android/obb'
+        ];
+        
+        for (const path of systemPaths) {
+          try {
+            const exists = await RNFS.exists(path);
+            if (exists) {
+              locations.push(path);
+            }
+          } catch (error) {
+            console.warn(`System path ${path} not accessible:`, error);
+          }
+        }
+      } catch (error) {
+        console.warn('System directories not accessible:', error);
+      }
+    }
+  } catch (error) {
+    console.error('Error getting storage locations:', error);
+  }
+
+  return locations;
 }; 

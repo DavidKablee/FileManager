@@ -16,107 +16,79 @@ import { initializeRecycleBin } from './src/utils/RecycleBin';
 
 const Stack = createNativeStackNavigator();
 
-async function requestAllPermissions() {
+export const requestStoragePermission = async () => {
   if (Platform.OS === 'android') {
     try {
-      // For Android 13 (API level 33) and above
+      // For Android 13+ (API 33+), we need different permissions
       if (Platform.Version >= 33) {
+        // Request READ_MEDIA_* permissions for Android 13+
         const permissions = [
           PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
           PermissionsAndroid.PERMISSIONS.READ_MEDIA_VIDEO,
           PermissionsAndroid.PERMISSIONS.READ_MEDIA_AUDIO,
-          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          PermissionsAndroid.PERMISSIONS.MANAGE_EXTERNAL_STORAGE,
         ];
 
-        const results = await Promise.all(
-          permissions.map(permission => PermissionsAndroid.request(permission))
-        );
-
-        const allGranted = results.every(
+        const results = await PermissionsAndroid.requestMultiple(permissions);
+        
+        // Check if all permissions are granted
+        const allGranted = Object.values(results).every(
           result => result === PermissionsAndroid.RESULTS.GRANTED
         );
 
         if (!allGranted) {
+          // If not all granted, show alert and return false
           Alert.alert(
-            'Full Access Required',
-            'This app needs full access to your device storage to function like a file manager. Please grant all permissions.',
+            'Permission Required',
+            'Please grant all media permissions to access your files. For full file manager access, you may need to grant "All files access" in your device settings.',
             [
+              { text: 'Cancel', style: 'cancel' },
               {
                 text: 'Open Settings',
-                onPress: () => {
-                  PermissionsAndroid.openSettings();
-                },
-              },
-              {
-                text: 'Cancel',
-                style: 'cancel',
+                onPress: () => Linking.openSettings(),
               },
             ]
           );
           return false;
         }
+
+        return true;
       } else {
-        // For Android 12 and below
-        const permissions = [
+        // For Android 12 and below, use the old permissions
+        const readGranted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
+          {
+            title: 'Storage Access Required',
+            message: 'This app needs access to your files to work properly.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+        
+        const writeGranted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          PermissionsAndroid.PERMISSIONS.MANAGE_EXTERNAL_STORAGE,
-        ];
-
-        const results = await Promise.all(
-          permissions.map(permission => PermissionsAndroid.request(permission))
+          {
+            title: 'Storage Access Required',
+            message: 'This app needs access to your files to work properly.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
         );
 
-        const allGranted = results.every(
-          result => result === PermissionsAndroid.RESULTS.GRANTED
+        return (
+          readGranted === PermissionsAndroid.RESULTS.GRANTED &&
+          writeGranted === PermissionsAndroid.RESULTS.GRANTED
         );
-
-        if (!allGranted) {
-          Alert.alert(
-            'Full Access Required',
-            'This app needs full access to your device storage to function like a file manager. Please grant all permissions.',
-            [
-              {
-                text: 'Open Settings',
-                onPress: () => {
-                  PermissionsAndroid.openSettings();
-                },
-              },
-              {
-                text: 'Cancel',
-                style: 'cancel',
-              },
-            ]
-          );
-          return false;
-        }
-      }
-
-      // Request media library permissions
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Please grant media library permission to access files.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Open Settings',
-              onPress: () => Linking.openSettings(),
-            },
-          ]
-        );
-        return false;
       }
     } catch (error) {
       console.error('Error requesting permissions:', error);
       return false;
     }
   }
+
   return true;
-}
+};
 
 const App = () => {
   useEffect(() => {
@@ -124,7 +96,31 @@ const App = () => {
       try {
         // Initialize recycle bin
         await initializeRecycleBin();
-        await requestAllPermissions();
+        
+        // Request storage permissions
+        const storageGranted = await requestStoragePermission();
+        if (!storageGranted) {
+          console.log('Storage permissions not granted');
+          return;
+        }
+
+        // Request media library permissions
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert(
+            'Media Library Permission Required',
+            'Please grant media library permission to access your media files.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Open Settings',
+                onPress: () => Linking.openSettings(),
+              },
+            ]
+          );
+        }
+
+        console.log('All permissions granted successfully');
       } catch (error) {
         console.error('Error during setup:', error);
       }
