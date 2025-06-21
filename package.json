@@ -20,6 +20,7 @@
     "expo": "~53.0.10",
     "expo-document-picker": "~13.1.5",
     "expo-file-system": "^18.1.10",
+    "expo-intent-launcher": "^12.1.5",
     "expo-linear-gradient": "^14.1.5",
     "expo-media-library": "~17.1.7",
     "expo-sharing": "~13.1.5",
@@ -31,10 +32,16 @@
     "react-native-file-viewer": "^2.1.5",
     "react-native-fs": "^2.20.0",
     "react-native-gesture-handler": "^2.25.0",
+    "react-native-image-crop-picker": "^0.50.1",
     "react-native-image-viewing": "^0.2.2",
-    "react-native-intent-launcher": "^0.2.1",
+    "react-native-pdf": "^6.7.7",
+    "react-native-permissions": "^5.4.1",
     "react-native-safe-area-context": "^5.4.1",
-    "react-native-screens": "^4.11.1"
+    "react-native-screens": "^4.11.1",
+    "react-native-share": "^12.1.0",
+    "react-native-sound": "^0.11.2",
+    "react-native-video": "^6.15.0",
+    "react-native-zip-archive": "^7.0.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

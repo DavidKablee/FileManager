@@ -3,6 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, 
 import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import * as DocumentPicker from 'expo-document-picker';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useThemeContext } from '../utils/ThemeContext';
@@ -231,8 +232,7 @@ const getFileType = (fileName: string) => {
 
 // Open file with default app, or alert if not possible
 const openApk = (apkPath: string) => {
-  IntentLauncher.startActivity({
-    action: 'android.intent.action.VIEW',
+  IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
     type: 'application/vnd.android.package-archive',
     data: 'file://' + apkPath,
     flags: 1,
