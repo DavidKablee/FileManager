@@ -266,39 +266,34 @@ const FileListItem: React.FC<{
   onPress: () => void;
   onLongPress: () => void;
 }> = ({ item, onPress, onLongPress }) => {
-  const fileType = getFileType(item.name);
-  const [thumbUri, setThumbUri] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    if (fileType === 'image') {
-      getThumbnail(item.path, '').then(setThumbUri);
-    } else if (fileType === 'video') {
-      createThumbnail({ url: item.path })
-        .then((response: { path: string }) => setThumbUri(response.path))
-        .catch(() => setThumbUri(null));
-    }
-  }, [item.path]);
-
+  const { theme } = useThemeContext();
+  const iconInfo = item.isFile ? getFileIcon(item.name) : { icon: getFolderIcon(item.name) as MaterialIconName, color: '#FFC107' };
+  
   return (
     <TouchableOpacity
-      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, backgroundColor: 'transparent' }}
+      style={[styles.fileItem, { backgroundColor: theme.cardBackground }]}
       onPress={onPress}
       onLongPress={onLongPress}
     >
-      {fileType === 'image' && thumbUri ? (
-        <Image source={{ uri: thumbUri }} style={{ width: 32, height: 32, borderRadius: 6, marginRight: 16 }} />
-      ) : fileType === 'video' && thumbUri ? (
-        <Image source={{ uri: thumbUri }} style={{ width: 32, height: 32, borderRadius: 6, marginRight: 16 }} />
-      ) : item.isFile ? (
-        <MaterialCommunityIcons name="folder-outline" size={32} color="#2196f3" style={{ marginRight: 16 }} />
-      ) : (
-        <MaterialCommunityIcons name="file-outline" size={32} color="#aaa" style={{ marginRight: 16 }} />
-      )}
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }} numberOfLines={1}>{item.name}</Text>
-        <Text style={{ color: '#aaa', fontSize: 12, marginTop: 2 }}>{item.modificationTime ? formatDate(item.modificationTime) : ''}</Text>
+      <View style={styles.fileIconContainer}>
+        <MaterialIcons
+          name={iconInfo.icon as MaterialIconName}
+          size={32}
+          color={iconInfo.color}
+        />
       </View>
-      <Text style={{ color: '#aaa', fontSize: 13, minWidth: 48, textAlign: 'right' }}>{item.isFile ? `${item.itemCount || 0} item${(item.itemCount || 0) === 1 ? '' : 's'}` : ''}</Text>
+      <View style={styles.fileDetails}>
+        <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
+          {item.name}
+        </Text>
+        <Text style={[styles.fileInfo, { color: theme.textSecondary }]}>
+          {item.isFile
+            ? `${item.size ? formatBytesToGB(item.size) : '0 B'} • ${
+                item.modificationTime ? formatDate(item.modificationTime) : 'Unknown date'
+              }`
+            : `${item.itemCount || 0} items`}
+        </Text>
+      </View>
     </TouchableOpacity>
   );
 };
@@ -615,22 +610,31 @@ const FileExplorer: React.FC = () => {
 
   // --- HEADER ---
   const renderHeader = () => (
-    <View style={{ backgroundColor: '#111', paddingTop: insets.top, paddingHorizontal: 0, paddingBottom: 0 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', height: 48 }}>
-        <TouchableOpacity onPress={goBack} style={{ paddingHorizontal: 12 }}>
-          <MaterialIcons name="arrow-back" size={26} color="#fff" />
+    <View style={styles.header}>
+      <View style={styles.headerLeft}>
+        <TouchableOpacity onPress={goBack} style={styles.headerButton}>
+          <MaterialIcons name="arrow-back" size={24} color="#6EC1E4" />
         </TouchableOpacity>
-        <View style={{ flex: 1 }} />
-        <TouchableOpacity onPress={handleSearch} style={{ paddingHorizontal: 8 }}>
-          <MaterialIcons name="search" size={24} color="#fff" />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={handleMoreOptions} style={{ paddingHorizontal: 8 }}>
-          <MaterialIcons name="more-vert" size={24} color="#fff" />
-        </TouchableOpacity>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          {currentPath.split('/').pop() || 'Files'}
+        </Text>
       </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingBottom: 4 }}>
-        <MaterialIcons name="folder" size={18} color="#2196f3" style={{ marginRight: 4 }} />
-        <Text style={{ color: '#2196f3', fontSize: 15, fontWeight: '500' }}>Internal storage</Text>
+      <View style={styles.headerRight}>
+        <TouchableOpacity onPress={handleSearch} style={styles.headerButton}>
+          <MaterialIcons name="search" size={24} color="#6EC1E4" />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleNewFile} style={styles.headerButton}>
+          <MaterialIcons name="note-add" size={24} color="#6EC1E4" />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleNewFolder} style={styles.headerButton}>
+          <MaterialIcons name="create-new-folder" size={24} color="#6EC1E4" />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleOpenDocument} style={styles.headerButton}>
+          <MaterialIcons name="upload-file" size={24} color="#6EC1E4" />
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleMoreOptions} style={styles.headerButton}>
+          <MaterialIcons name="more-vert" size={24} color="#6EC1E4" />
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -810,60 +814,57 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   header: {
-    width: '100%',
-    paddingTop: 15,
-    paddingBottom: 15,
-    paddingHorizontal: 15,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: '#eee',
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
   },
-  backButton: {
-    padding: 10,
-    marginRight: 15,
-    borderRadius: 25,
-    backgroundColor: 'rgba(110, 193, 228, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(110, 193, 228, 0.3)',
-    minWidth: 50,
-    minHeight: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  iconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(110, 193, 228, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  titleContainer: {
-    flex: 1,
-    marginLeft: 5,
-  },
-  headerTitle: {
-    color: '#6EC1E4',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 2,
-  },
-  pathText: {
-    color: '#888',
-    fontSize: 12,
-    fontFamily: 'monospace',
-  },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
   },
   headerButton: {
     padding: 8,
+    marginLeft: 4,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '500',
+    marginLeft: 8,
+    color: '#333',
+  },
+  fileItem: {
+    flexDirection: 'row',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    alignItems: 'center',
+  },
+  fileIconContainer: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fileDetails: {
+    marginLeft: 12,
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  fileInfo: {
+    fontSize: 12,
+    marginTop: 4,
   },
   sortFilterBar: {
     flexDirection: 'row',
@@ -933,22 +934,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
-  },
-  fileIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    backgroundColor: '#2a2a2a',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  folderIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    backgroundColor: 'rgba(110, 193, 228, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   itemContent: {
     flex: 1,
