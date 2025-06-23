@@ -33,6 +33,18 @@ interface FileItem {
   itemCount?: number; // For directories
 }
 
+interface DropdownProps {
+  isVisible: boolean;
+  options: Array<{
+    label: string;
+    onPress: () => void;
+    isDestructive?: boolean;
+    icon: string;
+  }>;
+  onClose: () => void;
+  position: { top: number; left: number };
+}
+
 const { width, height } = Dimensions.get('window');
 
 const formatDate = (timestamp: number) => {
@@ -170,13 +182,6 @@ const getMimeType = (fileName: string): string => {
   return '*/*';
 };
 
-interface DropdownProps {
-  isVisible: boolean;
-  options: { label: string; onPress: () => void; isDestructive?: boolean; icon?: MaterialIconName }[];
-  onClose: () => void;
-  position: { top: number; left: number };
-}
-
 const Dropdown: React.FC<DropdownProps> = ({ isVisible, options, onClose, position }) => {
   const [animation] = useState(new Animated.Value(0));
 
@@ -229,7 +234,7 @@ const Dropdown: React.FC<DropdownProps> = ({ isVisible, options, onClose, positi
               <View style={styles.dropdownOptionContent}>
                 {option.icon && (
                   <MaterialIcons
-                    name={option.icon}
+                    name={option.icon as MaterialIconName}
                     size={20}
                     color={option.isDestructive ? '#ff4444' : '#6EC1E4'}
                     style={styles.dropdownOptionIcon}
@@ -352,12 +357,15 @@ const FileExplorer: React.FC = () => {
   const [showMoreOptionsDropdown, setShowMoreOptionsDropdown] = useState(false);
   const [showFileItemActionDropdown, setShowFileItemActionDropdown] = useState(false);
   const [showSortFilterDropdown, setShowSortFilterDropdown] = useState(false);
+  const [showTypeFilterDropdown, setShowTypeFilterDropdown] = useState(false);
   const [selectedFileItemForActions, setSelectedFileItemForActions] = useState<FileItem>({} as FileItem);
   const [moreOptionsDropdownPosition, setMoreOptionsDropdownPosition] = useState({ top: 0, left: 0 });
   const [fileItemActionDropdownPosition, setFileItemActionDropdownPosition] = useState({ top: 0, left: 0 });
   const [sortFilterDropdownPosition, setSortFilterDropdownPosition] = useState({ top: 0, left: 0 });
+  const [typeFilterDropdownPosition, setTypeFilterDropdownPosition] = useState({ top: 0, left: 0 });
   const [sortBy, setSortBy] = useState<'name' | 'size' | 'modificationTime'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [filterType, setFilterType] = useState<'all' | 'images' | 'videos' | 'audio' | 'documents' | 'archives'>('all');
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<FileItem[]>([]);
@@ -367,8 +375,10 @@ const FileExplorer: React.FC = () => {
   const [imagePreviewVisible, setImagePreviewVisible] = useState(false);
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
 
-  const moreOptionsButtonRef = useRef(null);
-  const sortFilterButtonRef = useRef(null);
+  const moreOptionsButtonRef = useRef<View>(null);
+  const sortFilterButtonRef = useRef<View>(null);
+  const typeFilterButtonRef = useRef<View>(null);
+  const sortButtonRef = useRef<View>(null);
 
   useEffect(() => {
     loadFiles(currentPath);
@@ -377,23 +387,17 @@ const FileExplorer: React.FC = () => {
   const loadFiles = async (path: string) => {
     setFiles([]);
     try {
-      // Check if path is accessible
       const isAccessible = await isPathAccessible(path);
       if (!isAccessible) {
         Alert.alert(
           'Access Denied',
           `Cannot access ${path}. Please check permissions or try a different location.`,
-          [
-            { text: 'OK', onPress: () => navigation.goBack() }
-          ]
+          [{ text: 'OK', onPress: () => navigation.goBack() }]
         );
         return;
       }
 
-      // Use the enhanced readDirectory function
       const fileItems = await readDirectory(path);
-
-      // Convert to the expected format
       const convertedItems: FileItem[] = fileItems.map(item => ({
         name: item.name,
         path: item.path,
@@ -403,15 +407,15 @@ const FileExplorer: React.FC = () => {
         itemCount: item.itemCount
       }));
 
-      setFiles(convertedItems);
+      const filteredItems = filterFilesByType(convertedItems);
+      const sortedItems = sortFiles(filteredItems);
+      setFiles(sortedItems);
     } catch (error) {
       console.error('Error loading files:', error);
       Alert.alert(
         'Error',
         `Failed to load files from ${path}. Please check permissions.`,
-        [
-          { text: 'OK', onPress: () => navigation.goBack() }
-        ]
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
     }
   };
@@ -719,15 +723,41 @@ const FileExplorer: React.FC = () => {
 
   // --- SORT/FILTER BAR ---
   const renderSortFilterBar = () => (
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#111' }}>
-      <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#181818', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, marginRight: 8 }}>
-        <Text style={{ color: '#fff', fontSize: 15, marginRight: 4 }}>All</Text>
-        <MaterialIcons name="arrow-drop-down" size={20} color="#fff" />
+    <View style={styles.sortFilterBar}>
+      <TouchableOpacity
+        ref={typeFilterButtonRef}
+        style={styles.filterButton}
+        onPress={() => {
+          typeFilterButtonRef.current?.measureInWindow((x, y, width, height) => {
+            setTypeFilterDropdownPosition({ top: y + height, left: x });
+            setShowTypeFilterDropdown(true);
+          });
+        }}
+      >
+        <Text style={styles.filterButtonText}>
+          {filterType.charAt(0).toUpperCase() + filterType.slice(1)}
+        </Text>
+        <MaterialIcons name="arrow-drop-down" size={20} color={theme.text} />
       </TouchableOpacity>
-      <View style={{ flex: 1 }} />
-      <MaterialIcons name="sort" size={20} color="#aaa" style={{ marginRight: 2 }} />
-      <Text style={{ color: '#fff', fontSize: 15, marginRight: 2 }}>Name</Text>
-      <MaterialIcons name={sortOrder === 'asc' ? 'arrow-upward' : 'arrow-downward'} size={18} color="#aaa" />
+
+      <TouchableOpacity
+        ref={sortButtonRef}
+        style={styles.sortButton}
+        onPress={() => {
+          sortButtonRef.current?.measureInWindow((x, y, width, height) => {
+            setSortFilterDropdownPosition({ top: y + height, left: x });
+            setShowSortFilterDropdown(true);
+          });
+        }}
+      >
+        <MaterialIcons name="sort" size={20} color={theme.text} />
+        <Text style={styles.sortButtonText}>{sortBy.charAt(0).toUpperCase() + sortBy.slice(1)}</Text>
+        <MaterialIcons 
+          name={sortOrder === 'asc' ? 'arrow-upward' : 'arrow-downward'} 
+          size={18} 
+          color={theme.text} 
+        />
+      </TouchableOpacity>
     </View>
   );
 
@@ -754,24 +784,124 @@ const FileExplorer: React.FC = () => {
     />
   );
 
+  // Add new function to filter files by type
+  const filterFilesByType = (items: FileItem[]) => {
+    if (filterType === 'all') return items;
+
+    return items.filter(item => {
+      if (!item.isFile) return true; // Always show folders
+      const extension = item.name.toLowerCase().split('.').pop() || '';
+      
+      switch (filterType) {
+        case 'images':
+          return ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(extension);
+        case 'videos':
+          return ['mp4', 'avi', 'mov', 'mkv', 'wmv', 'flv'].includes(extension);
+        case 'audio':
+          return ['mp3', 'wav', 'flac', 'aac', 'ogg'].includes(extension);
+        case 'documents':
+          return ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt'].includes(extension);
+        case 'archives':
+          return ['zip', 'rar', '7z', 'tar', 'gz'].includes(extension);
+        default:
+          return true;
+      }
+    });
+  };
+
+  // Add new function to sort files
+  const sortFiles = (items: FileItem[]) => {
+    return [...items].sort((a, b) => {
+      // Always put folders first
+      if (a.isFile !== b.isFile) {
+        return a.isFile ? 1 : -1;
+      }
+
+      // Then sort by the selected criteria
+      let comparison = 0;
+      switch (sortBy) {
+        case 'name':
+          comparison = a.name.localeCompare(b.name);
+          break;
+        case 'size':
+          comparison = (a.size || 0) - (b.size || 0);
+          break;
+        case 'modificationTime':
+          comparison = (a.modificationTime || 0) - (b.modificationTime || 0);
+          break;
+      }
+
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+  };
+
   // --- MAIN RENDER ---
   return (
-    <View style={{ flex: 1, backgroundColor: '#111' }}>
+    <View style={{ flex: 1, backgroundColor: theme.background }}>
       {renderHeader()}
       {renderSortFilterBar()}
       {renderFileList()}
       {renderImagePreviewModal()}
-      {renderSortFilterBar()}
+
       <Dropdown
-        isVisible={showMoreOptionsDropdown}
+        isVisible={showTypeFilterDropdown}
         options={[
-          { label: 'Create New Folder', onPress: handleNewFolder, icon: 'create-new-folder' as MaterialIconName },
-          { label: 'Create New File', onPress: handleNewFile, icon: 'note-add' as MaterialIconName },
-          { label: 'Copy', onPress: () => Alert.alert('Copy', 'Copy functionality not yet implemented.'), icon: 'content-copy' as MaterialIconName },
-          { label: 'Move', onPress: () => Alert.alert('Move', 'Move functionality not yet implemented.'), icon: 'drive-file-move' as MaterialIconName },
+          { label: 'All Files', onPress: () => { setFilterType('all'); loadFiles(currentPath); }, icon: 'folder' },
+          { label: 'Images', onPress: () => { setFilterType('images'); loadFiles(currentPath); }, icon: 'image' },
+          { label: 'Videos', onPress: () => { setFilterType('videos'); loadFiles(currentPath); }, icon: 'videocam' },
+          { label: 'Audio', onPress: () => { setFilterType('audio'); loadFiles(currentPath); }, icon: 'music-note' },
+          { label: 'Documents', onPress: () => { setFilterType('documents'); loadFiles(currentPath); }, icon: 'description' },
+          { label: 'Archives', onPress: () => { setFilterType('archives'); loadFiles(currentPath); }, icon: 'folder' },
         ]}
-        onClose={() => setShowMoreOptionsDropdown(false)}
-        position={moreOptionsDropdownPosition}
+        onClose={() => setShowTypeFilterDropdown(false)}
+        position={typeFilterDropdownPosition}
+      />
+
+      <Dropdown
+        isVisible={showSortFilterDropdown}
+        options={[
+          { 
+            label: `Name ${sortBy === 'name' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}`, 
+            onPress: () => {
+              if (sortBy === 'name') {
+                setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+              } else {
+                setSortBy('name');
+                setSortOrder('asc');
+              }
+              loadFiles(currentPath);
+            },
+            icon: 'sort-by-alpha'
+          },
+          { 
+            label: `Size ${sortBy === 'size' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}`,
+            onPress: () => {
+              if (sortBy === 'size') {
+                setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+              } else {
+                setSortBy('size');
+                setSortOrder('desc');
+              }
+              loadFiles(currentPath);
+            },
+            icon: 'storage'
+          },
+          { 
+            label: `Date ${sortBy === 'modificationTime' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}`,
+            onPress: () => {
+              if (sortBy === 'modificationTime') {
+                setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+              } else {
+                setSortBy('modificationTime');
+                setSortOrder('desc');
+              }
+              loadFiles(currentPath);
+            },
+            icon: 'event'
+          },
+        ]}
+        onClose={() => setShowSortFilterDropdown(false)}
+        position={sortFilterDropdownPosition}
       />
 
       {showFileItemActionDropdown && (
@@ -779,29 +909,18 @@ const FileExplorer: React.FC = () => {
           isVisible={showFileItemActionDropdown}
           options={[
             ...(selectedFileItemForActions.isFile ? [
-              { label: 'Open', onPress: () => console.log('Open file', selectedFileItemForActions.name), icon: 'open-in-new' as MaterialIconName },
-              { label: 'Share', onPress: () => console.log('Share file', selectedFileItemForActions.name), icon: 'share' as MaterialIconName },
+              { label: 'Open', onPress: () => handleItemPress(selectedFileItemForActions), icon: 'open-in-new' },
+              { label: 'Share', onPress: () => console.log('Share file', selectedFileItemForActions.name), icon: 'share' },
             ] : []),
-            { label: 'Rename', onPress: () => handleRenameItem(selectedFileItemForActions), icon: 'edit' as MaterialIconName },
-            { label: 'Delete', onPress: () => handleDeleteItem(selectedFileItemForActions), isDestructive: true, icon: 'delete' as MaterialIconName },
-            { label: 'Copy', onPress: () => Alert.alert('Copy', 'Copy functionality not yet implemented.'), icon: 'content-copy' as MaterialIconName },
-            { label: 'Move', onPress: () => Alert.alert('Move', 'Move functionality not yet implemented.'), icon: 'drive-file-move' as MaterialIconName },
+            { label: 'Rename', onPress: () => handleRenameItem(selectedFileItemForActions), icon: 'edit' },
+            { label: 'Delete', onPress: () => handleDeleteItem(selectedFileItemForActions), isDestructive: true, icon: 'delete' },
+            { label: 'Copy', onPress: () => Alert.alert('Copy', 'Copy functionality not yet implemented.'), icon: 'content-copy' },
+            { label: 'Move', onPress: () => Alert.alert('Move', 'Move functionality not yet implemented.'), icon: 'drive-file-move' },
           ]}
           onClose={() => setShowFileItemActionDropdown(false)}
           position={fileItemActionDropdownPosition}
         />
       )}
-
-      <Dropdown
-        isVisible={showSortFilterDropdown}
-        options={[
-          { label: 'Name', onPress: () => { setSortBy('name'); setSortOrder('asc'); }, icon: 'sort-by-alpha' as MaterialIconName },
-          { label: 'Size', onPress: () => { setSortBy('size'); setSortOrder('desc'); }, icon: 'storage' as MaterialIconName },
-          { label: 'Date', onPress: () => { setSortBy('modificationTime'); setSortOrder('desc'); }, icon: 'event' as MaterialIconName },
-        ]}
-        onClose={() => setShowSortFilterDropdown(false)}
-        position={sortFilterDropdownPosition}
-      />
 
       <Modal
         visible={isSearchModalVisible}
@@ -948,46 +1067,41 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     backgroundColor: '#111',
     borderBottomWidth: 1,
     borderBottomColor: '#333',
   },
-  sortFilterButton: {
+  filterButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
+    backgroundColor: '#222',
     paddingHorizontal: 12,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 20,
+    paddingVertical: 6,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#444',
   },
-  sortButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  sortFilterText: {
-    color: '#6EC1E4',
+  filterButtonText: {
+    color: '#fff',
     fontSize: 14,
-    fontWeight: '500',
+    marginRight: 4,
   },
-  sortOptions: {
+  sortButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-  },
-  sortOptionButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#222',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#333',
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderColor: '#444',
+  },
+  sortButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    marginHorizontal: 4,
   },
   itemContainer: {
     marginHorizontal: 15,
