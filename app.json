@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "360 File Manager",
-    "slug": "360-file-manager",
+    "slug": "MyFileManager",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "assets/logo.png",

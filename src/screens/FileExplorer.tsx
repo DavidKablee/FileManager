@@ -127,6 +127,49 @@ const getFileIcon = (fileName: string) => {
   }
 };
 
+const getMimeType = (fileName: string): string => {
+  const extension = fileName.toLowerCase().split('.').pop() || '';
+  
+  // Image types
+  if (['jpg', 'jpeg'].includes(extension)) return 'image/jpeg';
+  if (extension === 'png') return 'image/png';
+  if (extension === 'gif') return 'image/gif';
+  if (extension === 'bmp') return 'image/bmp';
+  if (extension === 'webp') return 'image/webp';
+  
+  // Video types
+  if (extension === 'mp4') return 'video/mp4';
+  if (extension === 'avi') return 'video/x-msvideo';
+  if (extension === 'mov') return 'video/quicktime';
+  if (extension === 'mkv') return 'video/x-matroska';
+  if (extension === 'wmv') return 'video/x-ms-wmv';
+  if (extension === 'flv') return 'video/x-flv';
+  
+  // Audio types
+  if (extension === 'mp3') return 'audio/mpeg';
+  if (extension === 'wav') return 'audio/wav';
+  if (extension === 'flac') return 'audio/flac';
+  if (extension === 'aac') return 'audio/aac';
+  if (extension === 'ogg') return 'audio/ogg';
+  
+  // Document types
+  if (extension === 'pdf') return 'application/pdf';
+  if (['doc', 'docx'].includes(extension)) return 'application/msword';
+  if (['xls', 'xlsx'].includes(extension)) return 'application/vnd.ms-excel';
+  if (['ppt', 'pptx'].includes(extension)) return 'application/vnd.ms-powerpoint';
+  if (extension === 'txt') return 'text/plain';
+  
+  // Archive types
+  if (extension === 'zip') return 'application/zip';
+  if (extension === 'rar') return 'application/x-rar-compressed';
+  if (extension === '7z') return 'application/x-7z-compressed';
+  if (extension === 'tar') return 'application/x-tar';
+  if (extension === 'gz') return 'application/gzip';
+  
+  // Default
+  return '*/*';
+};
+
 interface DropdownProps {
   isVisible: boolean;
   options: { label: string; onPress: () => void; isDestructive?: boolean; icon?: MaterialIconName }[];
@@ -271,7 +314,7 @@ const FileListItem: React.FC<{
   
   return (
     <TouchableOpacity
-      style={[styles.fileItem, { backgroundColor: theme.cardBackground }]}
+      style={[styles.fileItem, { backgroundColor: theme.itemBackground }]}
       onPress={onPress}
       onLongPress={onLongPress}
     >
@@ -286,7 +329,7 @@ const FileListItem: React.FC<{
         <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>
           {item.name}
         </Text>
-        <Text style={[styles.fileInfo, { color: theme.textSecondary }]}>
+        <Text style={[styles.fileInfo, { color: theme.secondaryText }]}>
           {item.isFile
             ? `${item.size ? formatBytesToGB(item.size) : '0 B'} • ${
                 item.modificationTime ? formatDate(item.modificationTime) : 'Unknown date'
@@ -376,11 +419,46 @@ const FileExplorer: React.FC = () => {
   const handleItemPress = async (item: FileItem) => {
     if (!item.isFile) {
       navigation.push('FileExplorer', { initialPath: item.path, title: item.name });
-    } else {
-      // Add to recent files when a file is accessed
+      return;
+    }
+
+    try {
       await addToRecentFiles(item.path);
-      // Handle file opening
-      Alert.alert('Open File', `Would you like to open ${item.name}?`);
+      const extension = item.name.toLowerCase().split('.').pop() || '';
+      const mimeType = getMimeType(item.name);
+      
+      if (Platform.OS === 'android') {
+        // Check if it's an image file
+        if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(extension)) {
+          // First try to add it to the media library
+          const asset = await MediaLibrary.createAssetAsync(item.path);
+          // Then open the gallery
+          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+            data: asset.uri,
+            type: 'image/*',
+            flags: 1 | 2  // FLAG_GRANT_READ_URI_PERMISSION | FLAG_ACTIVITY_NEW_TASK
+          });
+        } else {
+          const fileUri = `file://${item.path}`;
+          await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+            data: fileUri,
+            type: mimeType,
+            flags: 1  // FLAG_GRANT_READ_URI_PERMISSION
+          });
+        }
+      } else {
+        // For iOS, we use Linking
+        const fileUri = `file://${item.path}`;
+        const supported = await Linking.canOpenURL(fileUri);
+        if (!supported) {
+          Alert.alert('Error', 'No app found to open this type of file');
+          return;
+        }
+        await Linking.openURL(fileUri);
+      }
+    } catch (error) {
+      console.error('Error opening file:', error);
+      Alert.alert('Error', 'Failed to open file. Please make sure you have an app installed that can open this type of file.');
     }
   };
 

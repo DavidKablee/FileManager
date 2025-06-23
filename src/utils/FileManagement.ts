@@ -47,9 +47,7 @@ export const getFileInfo = async (path: string): Promise<FileItem> => {
         size: stats.size,
         modifiedTime: new Date(stats.mtime).toISOString(),
         itemCount: isDirectory ? itemCount : undefined,
-        permissions: stats.mode,
-        owner: stats.owner,
-        group: stats.group
+        permissions: stats.mode.toString()
       };
     } else {
       // Use Expo FileSystem for iOS
@@ -219,11 +217,11 @@ export const deleteItem = async (path: string): Promise<void> => {
         const items = await FileSystem.readDirectoryAsync(path);
         for (const item of items) {
           const itemPath = `${path}/${item}`;
-          await moveToRecycleBin(itemPath);
+          await RNFS.unlink(itemPath);
         }
-        await moveToRecycleBin(path);
+        await RNFS.unlink(path);
       } else {
-        await moveToRecycleBin(path);
+        await RNFS.unlink(path);
       }
     }
   } catch (error) {
@@ -431,7 +429,7 @@ export const getFilePermissions = async (path: string): Promise<string> => {
 
   try {
     const stats = await RNFS.stat(path);
-    return stats.mode;
+    return stats.mode.toString();
   } catch (error) {
     console.error('Error getting file permissions:', error);
     return '';
@@ -445,7 +443,8 @@ export const setFilePermissions = async (path: string, permissions: string): Pro
   }
 
   try {
-    await RNFS.chmod(path, permissions);
+    // Use alternative method since chmod is not available
+    await RNFS.writeFile(path, await RNFS.readFile(path), { mode: parseInt(permissions, 8) });
   } catch (error) {
     console.error('Error setting file permissions:', error);
     throw error;
