@@ -301,8 +301,22 @@ export const getDirectoryContents = async (path: string) => {
 
 export const createFolder = async (parentPath: string, folderName: string) => {
   const newFolderPath = `${parentPath}/${folderName}`;
+  
   try {
-    await FileSystem.makeDirectoryAsync(newFolderPath, { intermediates: true });
+    // Check permissions first
+    const permissionsGranted = await checkAndRequestPermissions();
+    if (!permissionsGranted) {
+      throw new Error('Storage permissions not granted');
+    }
+
+    if (Platform.OS === 'android') {
+      // Use RNFS for Android
+      await RNFS.mkdir(newFolderPath);
+    } else {
+      // Use Expo FileSystem for iOS
+      await FileSystem.makeDirectoryAsync(newFolderPath, { intermediates: true });
+    }
+    
     return newFolderPath;
   } catch (error: any) {
     if (error.code === 'EEXIST') {
