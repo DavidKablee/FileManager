@@ -1,22 +1,38 @@
 {
+  "cli": {
+    "version": ">= 5.9.1",
+    "appVersionSource": "remote"
+  },
   "build": {
-    "preview": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
       "android": {
-        "buildType": "apk"
-      },
-      "distribution": "internal"
-    },
-    "production": {
-      "autoIncrement": true,
-      "android": {
+        "gradleCommand": ":app:assembleDebug",
         "buildType": "apk"
       }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle",
+        "gradleCommand": ":app:bundleRelease"
+      },
+      "autoIncrement": true
     }
   },
   "submit": {
-    "production": {}
-  },
-  "cli": {
-    "appVersionSource": "remote"
+    "production": {
+      "android": {
+        "serviceAccountKeyPath": "./pc-api-key.json",
+        "track": "production"
+      }
+    }
   }
 }

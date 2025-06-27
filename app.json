@@ -1,13 +1,17 @@
 {
   "expo": {
     "name": "360 File Manager",
-    "slug": "MyFileManager",
+    "slug": "360-file-manager",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "assets/logo.png",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "offline": true,
+    "runtimeVersion": "1.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/89119924-d4b5-4402-96fd-42cdde3b3b53"
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -29,14 +33,10 @@
         "WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.INTERNET",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.INTERNET"
       ],
-      "package": "com.filemanager360"
+      "package": "com.filemanager360",
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/logo.png"
@@ -51,8 +51,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "35d6f542-b5fc-4a6b-95bb-01b6437d4bec"
+        "projectId": "89119924-d4b5-4402-96fd-42cdde3b3b53"
       }
-    }
+    },
+    "owner": "udojidavid"
   }
 }
