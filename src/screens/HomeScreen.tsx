@@ -101,6 +101,11 @@ const HomeScreen = () => {
         const fullAccess = await hasFullFileAccess();
         setHasFullAccess(fullAccess);
         
+        // Only request full access if we don't have it
+        if (!fullAccess) {
+          await requestFullFileAccess();
+        }
+        
         // Get all storage locations
         const locations = await getAllStorageLocations();
         setStorageLocations(locations);

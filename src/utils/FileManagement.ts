@@ -710,6 +710,12 @@ export const hasFullFileAccess = async (): Promise<boolean> => {
   }
 
   try {
+    // Check if we've already verified full access
+    const hasVerifiedAccess = await AsyncStorage.getItem('hasVerifiedFullAccess');
+    if (hasVerifiedAccess === 'true') {
+      return true;
+    }
+
     // Test multiple paths that require full access
     const testPaths = [
       '/storage/emulated/0/Android/data',
@@ -725,6 +731,8 @@ export const hasFullFileAccess = async (): Promise<boolean> => {
           try {
             await RNFS.readDir(testPath);
             console.log(`Full file access confirmed via ${testPath}`);
+            // Store that we've verified access
+            await AsyncStorage.setItem('hasVerifiedFullAccess', 'true');
             return true;
           } catch (readError) {
             console.warn(`Cannot read ${testPath}:`, readError);
@@ -750,32 +758,42 @@ export const requestFullFileAccess = async (): Promise<boolean> => {
   }
 
   try {
+    // Check if we've already shown the instructions
+    const hasShownInstructions = await AsyncStorage.getItem('hasShownFullAccessInstructions');
+    if (hasShownInstructions === 'true') {
+      return false;
+    }
+
+    // Store that we've shown the instructions
+    await AsyncStorage.setItem('hasShownFullAccessInstructions', 'true');
+
+    // Show the instructions alert
     Alert.alert(
-      'Full File Access Required',
-      'To access all files on your device like a default file manager, please grant "All files access" permission:\n\n1. Go to Settings > Apps > File Manager\n2. Tap "Permissions"\n3. Enable "All files access"\n4. Return to this app',
+      'Full Access Required',
+      'For complete file manager functionality, please grant "All files access" permission in your device settings:\n\n1. Go to Settings > Apps > File Manager\n2. Tap "Permissions"\n3. Enable "All files access"',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Open Settings',
           onPress: () => Linking.openSettings(),
         },
-        {
-          text: 'Check Again',
-          onPress: async () => {
-            const hasAccess = await hasFullFileAccess();
-            if (hasAccess) {
-              Alert.alert('Success', 'Full file access granted!');
-            } else {
-              Alert.alert('Access Denied', 'Please grant "All files access" permission in settings.');
-            }
-          },
-        },
       ]
     );
+
     return false;
   } catch (error) {
     console.error('Error requesting full file access:', error);
     return false;
+  }
+};
+
+// Add a function to reset the permission state (useful for testing)
+export const resetPermissionState = async () => {
+  try {
+    await AsyncStorage.removeItem('hasVerifiedFullAccess');
+    await AsyncStorage.removeItem('hasShownFullAccessInstructions');
+  } catch (error) {
+    console.error('Error resetting permission state:', error);
   }
 };
 
