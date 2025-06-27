@@ -21,6 +21,7 @@ type SearchResult = {
   modifiedTime: string;
   type: string;
   isDirectory: boolean;
+  displayName?: string;
 };
 
 const SearchScreen = () => {
@@ -28,7 +29,75 @@ const SearchScreen = () => {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [fileIndex, setFileIndex] = useState<SearchResult[]>([]);
   const navigation = useNavigation();
+
+  // Build initial file index when component mounts
+  useEffect(() => {
+    buildFileIndex();
+  }, []);
+
+  const buildFileIndex = async () => {
+    const directories = [
+      RNFS.DownloadDirectoryPath,
+      RNFS.ExternalStorageDirectoryPath + '/Documents',
+      RNFS.ExternalStorageDirectoryPath + '/DCIM',
+      RNFS.ExternalStorageDirectoryPath + '/Pictures',
+      RNFS.ExternalStorageDirectoryPath + '/Music',
+      RNFS.ExternalStorageDirectoryPath + '/Movies',
+    ];
+
+    let indexedFiles: SearchResult[] = [];
+
+    try {
+      for (const dir of directories) {
+        try {
+          const items = await RNFS.readDir(dir);
+          for (const item of items) {
+            indexedFiles.push({
+              name: item.name.toLowerCase(), // Store lowercase for faster searching
+              displayName: item.name, // Keep original name for display
+              path: item.path,
+              size: item.size,
+              modifiedTime: new Date(item.mtime || Date.now()).toISOString(),
+              type: item.isDirectory() ? 'folder' : getFileType(item.name),
+              isDirectory: item.isDirectory(),
+            });
+
+            // Only go one level deep for common directories
+            if (item.isDirectory()) {
+              try {
+                const subItems = await RNFS.readDir(item.path);
+                for (const subItem of subItems) {
+                  indexedFiles.push({
+                    name: subItem.name.toLowerCase(),
+                    displayName: subItem.name,
+                    path: subItem.path,
+                    size: subItem.size,
+                    modifiedTime: new Date(subItem.mtime || Date.now()).toISOString(),
+                    type: subItem.isDirectory() ? 'folder' : getFileType(subItem.name),
+                    isDirectory: subItem.isDirectory(),
+                  });
+                }
+              } catch (error) {
+                console.warn(`Error indexing subdirectory ${item.path}:`, error);
+              }
+            }
+          }
+        } catch (error) {
+          console.warn(`Error indexing directory ${dir}:`, error);
+        }
+      }
+
+      // Remove duplicates based on path
+      const uniqueFiles = Array.from(
+        new Map(indexedFiles.map(item => [item.path, item])).values()
+      );
+      setFileIndex(uniqueFiles);
+    } catch (error) {
+      console.error('Error building file index:', error);
+    }
+  };
 
   const getFileType = (fileName: string): string => {
     const ext = fileName.toLowerCase().split('.').pop() || '';
@@ -67,63 +136,22 @@ const SearchScreen = () => {
     const searchQuery = query.toLowerCase();
 
     try {
-      const directories = [
-        RNFS.ExternalStorageDirectoryPath,
-        RNFS.DownloadDirectoryPath,
-        RNFS.ExternalStorageDirectoryPath + '/Documents',
-        RNFS.ExternalStorageDirectoryPath + '/DCIM',
-        RNFS.ExternalStorageDirectoryPath + '/Pictures',
-        RNFS.ExternalStorageDirectoryPath + '/Music',
-        RNFS.ExternalStorageDirectoryPath + '/Movies',
-      ];
-
-      let results: SearchResult[] = [];
-
-      const searchDirectory = async (directory: string) => {
-        try {
-          const items = await RNFS.readDir(directory);
-          
-          for (const item of items) {
-            // Check if the file/folder name matches the search query
-            if (item.name.toLowerCase().includes(searchQuery)) {
-              results.push({
-                name: item.name,
-                path: item.path,
-                size: item.size,
-                modifiedTime: new Date(item.mtime || Date.now()).toISOString(),
-                type: item.isDirectory() ? 'folder' : getFileType(item.name),
-                isDirectory: item.isDirectory(),
-              });
-            }
-
-            // Recursively search in subdirectories
-            if (item.isDirectory()) {
-              await searchDirectory(item.path);
-            }
-          }
-        } catch (error) {
-          console.warn(`Error searching directory ${directory}:`, error);
-        }
-      };
-
-      // Search all directories concurrently
-      await Promise.all(directories.map(dir => searchDirectory(dir)));
-
-      // Remove duplicates and sort by relevance
-      const uniqueResults = Array.from(
-        new Map(results.map(item => [item.path, item])).values()
+      // Search in the pre-built index
+      const results = fileIndex.filter(item => 
+        item.name.includes(searchQuery) || 
+        item.path.toLowerCase().includes(searchQuery)
       );
 
       // Sort results: exact matches first, then partial matches
-      uniqueResults.sort((a, b) => {
-        const aExact = a.name.toLowerCase() === searchQuery;
-        const bExact = b.name.toLowerCase() === searchQuery;
+      results.sort((a, b) => {
+        const aExact = a.name === searchQuery;
+        const bExact = b.name === searchQuery;
         if (aExact && !bExact) return -1;
         if (!aExact && bExact) return 1;
         return a.name.localeCompare(b.name);
       });
 
-      setSearchResults(uniqueResults);
+      setSearchResults(results.slice(0, 100)); // Limit to 100 results for better performance
       
       // Save to recent searches
       if (!recentSearches.includes(query)) {
@@ -136,6 +164,17 @@ const SearchScreen = () => {
     }
   };
 
+  // Debounce search to prevent too many rapid searches
+  useEffect(() => {
+    const debounceTimeout = setTimeout(() => {
+      if (searchQuery.length >= 2) { // Reduced to 2 characters since search is faster now
+        searchFiles(searchQuery);
+      }
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(debounceTimeout);
+  }, [searchQuery]);
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
@@ -145,7 +184,7 @@ const SearchScreen = () => {
     if (item.isDirectory) {
       navigation.navigate('FileExplorer', {
         initialPath: item.path,
-        title: item.name,
+        title: item.displayName || item.name,
       });
     } else {
       // Handle file opening based on type
@@ -181,7 +220,7 @@ const SearchScreen = () => {
       </View>
       <View style={styles.resultInfo}>
         <Text style={styles.resultName} numberOfLines={1}>
-          {item.name}
+          {item.displayName || item.name}
         </Text>
         <Text style={styles.resultPath} numberOfLines={1}>
           {item.path.replace(RNFS.ExternalStorageDirectoryPath, 'Storage')}

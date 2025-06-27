@@ -1,16 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as RNFS from 'react-native-fs';
-import { moveToRecycleBin } from '../utils/RecycleBin';
-import { formatFileSize } from '../utils/FileManagement';
 
 type RootStackParamList = {
   Home: undefined;
   FileExplorer: { initialPath: string; title: string };
   SearchScreen: undefined;
+  InternalStorage: undefined;
 };
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -29,18 +28,15 @@ type PathStackItem = {
   title: string;
 };
 
-const FileExplorer = () => {
+const InternalStorageScreen = () => {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [sortBy, setSortBy] = useState<'name' | 'date'>('name');
   const [sortAscending, setSortAscending] = useState(true);
-  const [pathStack, setPathStack] = useState<PathStackItem[]>([]);
+  const [pathStack, setPathStack] = useState<PathStackItem[]>([{
+    path: RNFS.ExternalStorageDirectoryPath,
+    title: 'Internal storage'
+  }]);
   const navigation = useNavigation<NavigationProp>();
-  const route = useRoute();
-  const params = route.params as { initialPath: string; title: string };
-
-  useEffect(() => {
-    setPathStack([{ path: params.initialPath, title: params.title }]);
-  }, [params]);
 
   const loadFiles = async (path: string) => {
     try {
@@ -80,9 +76,7 @@ const FileExplorer = () => {
   };
 
   useEffect(() => {
-    if (pathStack.length > 0) {
-      loadFiles(pathStack[pathStack.length - 1].path);
-    }
+    loadFiles(pathStack[pathStack.length - 1].path);
   }, [pathStack]);
 
   const sortFiles = (items: FileItem[]) => {
@@ -111,6 +105,15 @@ const FileExplorer = () => {
     const hours = date.getHours().toString().padStart(2, '0');
     const minutes = date.getMinutes().toString().padStart(2, '0');
     return `${day} ${month} ${year} ${hours}:${minutes}`;
+  };
+
+  const formatFileSize = (bytes?: number): string => {
+    if (bytes === undefined) return '';
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   const getFileIcon = (item: FileItem) => {
@@ -155,44 +158,13 @@ const FileExplorer = () => {
     }
   };
 
-  const handleDelete = async (item: FileItem) => {
-    Alert.alert(
-      'Delete Item',
-      `Are you sure you want to delete "${item.name}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (item.isDirectory) {
-                await RNFS.unlink(item.path);
-              } else {
-                const moved = await moveToRecycleBin(item.path);
-                if (!moved) {
-                  Alert.alert('Error', 'Failed to move file to recycle bin');
-                  return;
-                }
-              }
-              await loadFiles(pathStack[pathStack.length - 1].path);
-            } catch (error) {
-              console.error('Error deleting item:', error);
-              Alert.alert('Error', 'Failed to delete item');
-            }
-          }
-        }
-      ]
-    );
-  };
-
   const renderHeader = () => (
     <View style={styles.header}>
       <TouchableOpacity onPress={handleBack} style={styles.backButton}>
         <MaterialIcons name="arrow-back" size={24} color="white" />
       </TouchableOpacity>
       <View style={styles.titleContainer}>
-        <Text style={styles.title}>{pathStack[pathStack.length - 1]?.title || ''}</Text>
+        <Text style={styles.title}>{pathStack[pathStack.length - 1].title}</Text>
         <Text style={styles.subtitle}>{files.length} items</Text>
       </View>
       <View style={styles.headerRight}>
@@ -259,19 +231,11 @@ const FileExplorer = () => {
         <Text style={styles.fileName}>{item.name}</Text>
         <Text style={styles.fileDate}>{formatDate(item.modifiedTime)}</Text>
       </View>
-      <View style={styles.fileActions}>
-        {item.isDirectory ? (
-          <Text style={styles.itemCount}>{item.itemCount} items</Text>
-        ) : (
-          <Text style={styles.itemCount}>{formatFileSize(item.size || 0)}</Text>
-        )}
-        <TouchableOpacity 
-          style={styles.deleteButton}
-          onPress={() => handleDelete(item)}
-        >
-          <MaterialIcons name="delete" size={24} color="#F44336" />
-        </TouchableOpacity>
-      </View>
+      {item.isDirectory ? (
+        <Text style={styles.itemCount}>{item.itemCount} items</Text>
+      ) : (
+        <Text style={styles.itemCount}>{formatFileSize(item.size)}</Text>
+      )}
     </TouchableOpacity>
   );
 
@@ -371,18 +335,11 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 14,
   },
-  fileActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   itemCount: {
     color: '#888',
     fontSize: 14,
-    marginRight: 16,
-  },
-  deleteButton: {
-    padding: 8,
+    marginLeft: 16,
   },
 });
 
-export default FileExplorer; 
+export default InternalStorageScreen; 

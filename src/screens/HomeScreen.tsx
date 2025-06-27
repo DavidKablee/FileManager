@@ -21,6 +21,8 @@ type RootStackParamList = {
   DownloadsGallery: undefined;
   ApkGallery: undefined;
   SearchScreen: undefined;
+  InternalStorage: undefined;
+  ImageGallery: undefined;
 };
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -41,6 +43,7 @@ const HomeScreen = () => {
 
   const [internalStorage, setInternalStorage] = useState('Loading...');
   const [sdCardStorage, setSdCardStorage] = useState('Not inserted');
+  const [hasSDCard, setHasSDCard] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
@@ -49,6 +52,43 @@ const HomeScreen = () => {
   const [permissionsGranted, setPermissionsGranted] = useState(false);
   const [hasFullAccess, setHasFullAccess] = useState(false);
   const [storageLocations, setStorageLocations] = useState<string[]>([]);
+
+  const checkSDCard = async () => {
+    try {
+      // Common paths for external SD card on Android
+      const possiblePaths = [
+        '/storage/sdcard1',
+        '/storage/extSdCard',
+        '/storage/external_SD',
+        '/storage/ext_sd',
+        '/mnt/extSdCard'
+      ];
+
+      for (const path of possiblePaths) {
+        try {
+          const stats = await RNFS.stat(path);
+          if (stats.isDirectory()) {
+            setHasSDCard(true);
+            // Get SD card storage info
+            const files = await RNFS.readDir(path);
+            const totalSize = files.reduce((acc, file) => acc + (file.size || 0), 0);
+            setSdCardStorage(formatBytesToGB(totalSize));
+            return;
+          }
+        } catch (e) {
+          // Path not accessible or doesn't exist
+          continue;
+        }
+      }
+      // No SD card found
+      setHasSDCard(false);
+      setSdCardStorage('Not inserted');
+    } catch (error) {
+      console.error('Error checking SD card:', error);
+      setHasSDCard(false);
+      setSdCardStorage('Not inserted');
+    }
+  };
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -69,6 +109,7 @@ const HomeScreen = () => {
           // Only load storage info and recent files if permissions are granted
           await getStorageInfo();
           await loadRecentFiles();
+          await checkSDCard(); // Add SD card check
         } else {
           // Show permission warning
           Alert.alert(
@@ -146,66 +187,37 @@ const HomeScreen = () => {
 
   const STORAGE_DATA = [
     {
-      icon: <View><MaterialIcons name="smartphone" size={22} color="#6EC1E4" /></View>, 
+      icon: <MaterialIcons name="phone-android" size={24} color="#6EC1E4" />,
       label: 'Internal storage', 
       value: internalStorage,
-      onPress: async () => {
-        if (!permissionsGranted) {
-          const granted = await checkAndRequestPermissions();
-          if (!granted) {
-            Alert.alert(
-              'Permission Required',
-              'Please grant storage permissions to access internal storage.',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Open Settings', onPress: () => Linking.openSettings() },
-              ]
-            );
-            return;
-          }
-          setPermissionsGranted(true);
-        }
-        navigation.navigate('FileExplorer', {
-          initialPath: Platform.OS === 'android' ? '/storage/emulated/0' : FileSystem.documentDirectory || '',
-          title: 'Internal Storage'
-        });
-      },
+      path: RNFS.ExternalStorageDirectoryPath
     },
     {
-      icon: <View><MaterialIcons name="sd-card" size={22} color="#A084E8" /></View>, 
+      icon: <MaterialIcons name="sd-card" size={24} color="#B5E61D" />,
       label: 'SD card', 
       value: sdCardStorage,
-      onPress: async () => {
-        if (!permissionsGranted) {
-          const granted = await checkAndRequestPermissions();
-          if (!granted) {
+      path: null
+    }
+  ];
+
+  const handleStoragePress = (item: typeof STORAGE_DATA[0]) => {
+    if (item.label === 'SD card') {
+      if (!hasSDCard) {
             Alert.alert(
-              'Permission Required',
-              'Please grant storage permissions to access SD card.',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Open Settings', onPress: () => Linking.openSettings() },
-              ]
+          'SD Card Not Found',
+          'Please insert an SD card to access external storage.',
+          [{ text: 'OK' }]
             );
             return;
           }
-          setPermissionsGranted(true);
-        }
-        
-        // Check if SD card is available
-        const sdCardPath = '/storage/sdcard1';
-        const sdCardExists = await isPathAccessible(sdCardPath);
-        if (sdCardExists) {
+    }
+    if (item.path) {
           navigation.navigate('FileExplorer', {
-            initialPath: sdCardPath,
-            title: 'SD Card'
+        initialPath: item.path,
+        title: item.label
           });
-        } else {
-          Alert.alert('SD Card', 'SD card not found or not accessible.');
         }
-      },
-    },
-  ];
+  };
 
   const handleCategoryPress = async (path: string, title: string) => {
     try {
@@ -267,7 +279,7 @@ const HomeScreen = () => {
     {
       icon: <MaterialIcons name="image" size={24} color="#4CAF50" />,
       label: 'Images',
-      onPress: () => handleCategoryPress('/storage/emulated/0/DCIM', 'Images'),
+      onPress: () => navigation.navigate('ImageGallery'),
     },
     {
       icon: <MaterialIcons name="videocam" size={24} color="#F44336" />,
@@ -516,10 +528,19 @@ const HomeScreen = () => {
         )}
 
         {/* Search and Recent files buttons */}
-        <View style={styles.topButtonsContainer}>
+        {/* <View style={styles.topButtonsContainer}>
           <TouchableOpacity
             style={styles.searchBtn}
             onPress={() => setIsSearchModalVisible(true)}
+          >
+            <MaterialIcons name="search" size={22} color="#6EC1E4" />
+            <Text style={styles.searchBtnText}>Search files</Text>
+          </TouchableOpacity>
+        </View> */}
+        <View style={styles.topButtonsContainer}>
+          <TouchableOpacity 
+            style={styles.searchBtn}
+            onPress={() => navigation.navigate('SearchScreen')}
           >
             <MaterialIcons name="search" size={22} color="#6EC1E4" />
             <Text style={styles.searchBtnText}>Search files</Text>
@@ -539,18 +560,23 @@ const HomeScreen = () => {
         {/* Storage section */}
         <View style={styles.storageSection}>
           {STORAGE_DATA.map((item, idx) => (
-            <View key={idx} style={styles.storageCard}>
+            <TouchableOpacity 
+              key={idx} 
+              style={[
+                styles.storageCard,
+                !item.path && styles.disabledStorageCard
+              ]}
+              onPress={() => handleStoragePress(item)}
+            >
               {item.icon}
               <View style={{ marginLeft: 12 }}>
                 <Text style={styles.storageLabel}>{item.label}</Text>
-                <Text style={styles.storageValue}>{item.value}</Text>
+                <Text style={styles.storageValue}>
+                  {item.label === 'SD card' && !hasSDCard ? 'Mount an SD card' : item.value}
+                </Text>
               </View>
-            </View>
-          ))}
-          <TouchableOpacity style={styles.bottomBtn} onPress={listFiles}>
-            <MaterialIcons name="folder" size={22} color="#6EC1E4" />
-            <Text style={styles.bottomBtnText}>List Root Files</Text>
           </TouchableOpacity>
+          ))}
         </View>
 
         {/* Recycle bin & Analyse storage */}
@@ -564,7 +590,13 @@ const HomeScreen = () => {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.bottomBtn}
-            onPress={() => Alert.alert('Analyse Storage', 'This feature is not yet implemented.')}
+            onPress={() => {
+              if (Platform.OS === 'android') {
+                Linking.sendIntent('android.settings.INTERNAL_STORAGE_SETTINGS');
+              } else {
+                Alert.alert('Not Available', 'This feature is only available on Android devices.');
+              }
+            }}
           >
             <Ionicons name="search" size={22} color="#6EC1E4" />
             <Text style={styles.bottomBtnText}>Analyse storage</Text>
@@ -583,18 +615,6 @@ const HomeScreen = () => {
               <Text style={styles.emptyText}>No recent files</Text>
             </View>
           )}
-        </View>
-
-        <View style={styles.headerRight}>
-          <TouchableOpacity 
-            style={styles.iconButton}
-            onPress={() => navigation.navigate('SearchScreen')}
-          >
-            <MaterialIcons name="search" size={24} color="white" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconButton}>
-            <MaterialIcons name="more-vert" size={24} color="white" />
-          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -856,6 +876,9 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     padding: 8,
+  },
+  disabledStorageCard: {
+    opacity: 0.7,
   },
 });
 

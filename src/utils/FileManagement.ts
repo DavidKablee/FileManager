@@ -2,6 +2,7 @@ import * as FileSystem from 'expo-file-system';
 import { Platform, PermissionsAndroid, Alert, Linking } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import RNFS from 'react-native-fs';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface FileItem {
   name: string;
@@ -872,4 +873,111 @@ export const getAllStorageLocations = async (): Promise<string[]> => {
   }
 
   return locations;
+}; 
+
+interface FileCache {
+  files: FileItem[];
+  lastUpdated: number;
+  directories: {
+    [path: string]: {
+      files: FileItem[];
+      lastUpdated: number;
+    }
+  };
+}
+
+const CACHE_EXPIRY = 5 * 60 * 1000; // 5 minutes
+const BATCH_SIZE = 100;
+
+export const scanFilesOptimized = async (
+  directories: string[],
+  fileTypes: string[],
+  useCache: boolean = true
+): Promise<FileItem[]> => {
+  try {
+    if (useCache) {
+      const cachedData = await AsyncStorage.getItem('fileCache');
+      if (cachedData) {
+        const cache: FileCache = JSON.parse(cachedData);
+        const now = Date.now();
+        
+        // Check if cache is still valid
+        if (now - cache.lastUpdated < CACHE_EXPIRY) {
+          return cache.files.filter(file => {
+            const ext = file.name.toLowerCase().split('.').pop();
+            return fileTypes.includes(ext || '');
+          });
+        }
+      }
+    }
+
+    let allFiles: FileItem[] = [];
+    const newCache: FileCache = {
+      files: [],
+      lastUpdated: Date.now(),
+      directories: {}
+    };
+
+    for (const dir of directories) {
+      try {
+        const items = await RNFS.readDir(dir);
+        let batch: FileItem[] = [];
+        
+        for (const item of items) {
+          if (!item.isDirectory()) {
+            const ext = item.name.toLowerCase().split('.').pop();
+            if (fileTypes.includes(ext || '')) {
+              const fileItem: FileItem = {
+                name: item.name,
+                path: item.path,
+                isDirectory: false,
+                size: item.size,
+                modifiedTime: new Date(item.mtime || Date.now()).toISOString()
+              };
+              batch.push(fileItem);
+              
+              // Process in batches
+              if (batch.length >= BATCH_SIZE) {
+                allFiles = [...allFiles, ...batch];
+                batch = [];
+              }
+            }
+          }
+        }
+        
+        // Add remaining items
+        if (batch.length > 0) {
+          allFiles = [...allFiles, ...batch];
+        }
+
+        // Update cache for this directory
+        newCache.directories[dir] = {
+          files: allFiles,
+          lastUpdated: Date.now()
+        };
+      } catch (error) {
+        console.warn(`Error reading directory ${dir}:`, error);
+      }
+    }
+
+    // Update the cache
+    newCache.files = allFiles;
+    if (useCache) {
+      await AsyncStorage.setItem('fileCache', JSON.stringify(newCache));
+    }
+
+    return allFiles;
+  } catch (error) {
+    console.error('Error in scanFilesOptimized:', error);
+    return [];
+  }
+};
+
+// Helper function to clear the file cache
+export const clearFileCache = async () => {
+  try {
+    await AsyncStorage.removeItem('fileCache');
+  } catch (error) {
+    console.error('Error clearing file cache:', error);
+  }
 }; 

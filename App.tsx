@@ -14,6 +14,7 @@ import DownloadsGallery from './src/screens/DownloadsGallery';
 import ImageGallery from './src/screens/ImageGallery';
 import ApkGallery from './src/screens/ApkGallery';
 import SearchScreen from './src/screens/SearchScreen';
+import InternalStorageScreen from './src/screens/InternalStorageScreen';
 import { ThemeProvider } from './src/utils/ThemeContext';
 import { useEffect } from 'react';
 import * as MediaLibrary from 'expo-media-library';
@@ -156,6 +157,7 @@ const App = () => {
             <Stack.Screen name="ImageGallery" component={ImageGallery} options={{ headerShown: false }} />
             <Stack.Screen name="ApkGallery" component={ApkGallery} options={{ headerShown: false }} />
             <Stack.Screen name="SearchScreen" component={SearchScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="InternalStorage" component={InternalStorageScreen} options={{ headerShown: false }} />
           </Stack.Navigator>
         </NavigationContainer>
       </ThemeProvider>

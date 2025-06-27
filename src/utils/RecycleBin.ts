@@ -1,123 +1,133 @@
-import * as FileSystem from 'expo-file-system';
-import { Platform } from 'react-native';
+import * as RNFS from 'react-native-fs';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Get the recycle bin directory path
-const getRecycleBinPath = () => {
-  const basePath = Platform.OS === 'android' 
-    ? '/storage/emulated/0'
-    : FileSystem.documentDirectory;
-  return `${basePath}/.recyclebin`;
+const RECYCLE_BIN_KEY = '@recycle_bin_items';
+const RECYCLE_BIN_PATH = `${RNFS.ExternalStorageDirectoryPath}/.recyclebin`;
+
+export type RecycleBinItem = {
+  id: string;
+  originalPath: string;
+  originalName: string;
+  recyclePath: string;
+  deletedAt: string;
+  size: number;
+  type: string;
 };
 
-// Initialize recycle bin directory
 export const initializeRecycleBin = async () => {
-  const recycleBinPath = getRecycleBinPath();
-  const dirInfo = await FileSystem.getInfoAsync(recycleBinPath);
-  
-  if (!dirInfo.exists) {
-    await FileSystem.makeDirectoryAsync(recycleBinPath, { intermediates: true });
-  }
-};
-
-// Move item to recycle bin
-export const moveToRecycleBin = async (path: string): Promise<void> => {
   try {
-    const recycleBinPath = getRecycleBinPath();
-    const fileName = path.split('/').pop() || '';
-    const timestamp = new Date().getTime();
-    const newPath = `${recycleBinPath}/${timestamp}_${fileName}`;
-
-    // Create metadata file
-    const metadata = {
-      originalPath: path,
-      deletedAt: timestamp,
-      fileName: fileName
-    };
-    const metadataPath = `${newPath}.meta`;
-    
-    // Move the file and create metadata
-    await FileSystem.moveAsync({
-      from: path,
-      to: newPath
-    });
-    await FileSystem.writeAsStringAsync(metadataPath, JSON.stringify(metadata));
+    // Create recycle bin directory if it doesn't exist
+    const exists = await RNFS.exists(RECYCLE_BIN_PATH);
+    if (!exists) {
+      await RNFS.mkdir(RECYCLE_BIN_PATH);
+    }
   } catch (error) {
-    console.error('Error moving to recycle bin:', error);
-    throw error;
+    console.error('Error initializing recycle bin:', error);
   }
 };
 
-// Get all items in recycle bin
-export const getRecycleBinItems = async () => {
+export const moveToRecycleBin = async (filePath: string): Promise<boolean> => {
   try {
-    const recycleBinPath = getRecycleBinPath();
-    const items = await FileSystem.readDirectoryAsync(recycleBinPath);
-    
-    const recycleBinItems = await Promise.all(
-      items
-        .filter(item => !item.endsWith('.meta'))
-        .map(async (item) => {
-          const metadataPath = `${recycleBinPath}/${item}.meta`;
-          const metadataContent = await FileSystem.readAsStringAsync(metadataPath);
-          const metadata = JSON.parse(metadataContent);
-          
-          const fileInfo = await FileSystem.getInfoAsync(`${recycleBinPath}/${item}`);
-          
-          return {
-            name: metadata.fileName,
-            path: `${recycleBinPath}/${item}`,
-            originalPath: metadata.originalPath,
-            deletedAt: metadata.deletedAt,
-            size: fileInfo.size,
-            isFile: !fileInfo.isDirectory
-          };
-        })
-    );
-    
-    return recycleBinItems;
+    const fileInfo = await RNFS.stat(filePath);
+    if (fileInfo.isDirectory()) {
+      return false; // Don't handle directories for now
+    }
+
+    // Generate unique ID for the file
+    const id = Date.now().toString();
+    const fileName = filePath.split('/').pop() || '';
+    const recyclePath = `${RECYCLE_BIN_PATH}/${id}_${fileName}`;
+
+    // Move file to recycle bin
+    await RNFS.moveFile(filePath, recyclePath);
+
+    // Create recycle bin item
+    const item: RecycleBinItem = {
+      id,
+      originalPath: filePath,
+      originalName: fileName,
+      recyclePath,
+      deletedAt: new Date().toISOString(),
+      size: fileInfo.size,
+      type: fileName.split('.').pop()?.toLowerCase() || 'unknown'
+    };
+
+    // Save item metadata
+    const existingItems = await getRecycleBinItems();
+    await AsyncStorage.setItem(RECYCLE_BIN_KEY, JSON.stringify([...existingItems, item]));
+
+    return true;
+  } catch (error) {
+    console.error('Error moving file to recycle bin:', error);
+    return false;
+  }
+};
+
+export const getRecycleBinItems = async (): Promise<RecycleBinItem[]> => {
+  try {
+    const items = await AsyncStorage.getItem(RECYCLE_BIN_KEY);
+    return items ? JSON.parse(items) : [];
   } catch (error) {
     console.error('Error getting recycle bin items:', error);
-    throw error;
+    return [];
   }
 };
 
-// Restore item from recycle bin
-export const restoreFromRecycleBin = async (path: string): Promise<void> => {
+export const restoreFromRecycleBin = async (item: RecycleBinItem): Promise<boolean> => {
   try {
-    const metadataPath = `${path}.meta`;
-    const metadataContent = await FileSystem.readAsStringAsync(metadataPath);
-    const metadata = JSON.parse(metadataContent);
+    // Check if original directory exists
+    const originalDir = item.originalPath.substring(0, item.originalPath.lastIndexOf('/'));
+    const originalDirExists = await RNFS.exists(originalDir);
     
-    // Check if original location exists
-    const originalDirInfo = await FileSystem.getInfoAsync(metadata.originalPath);
-    if (originalDirInfo.exists) {
-      throw new Error('Original location already exists');
+    if (!originalDirExists) {
+      await RNFS.mkdir(originalDir);
     }
-    
+
     // Move file back to original location
-    await FileSystem.moveAsync({
-      from: path,
-      to: metadata.originalPath
-    });
-    
-    // Delete metadata file
-    await FileSystem.deleteAsync(metadataPath);
+    await RNFS.moveFile(item.recyclePath, item.originalPath);
+
+    // Remove item from metadata
+    const items = await getRecycleBinItems();
+    const updatedItems = items.filter(i => i.id !== item.id);
+    await AsyncStorage.setItem(RECYCLE_BIN_KEY, JSON.stringify(updatedItems));
+
+    return true;
   } catch (error) {
-    console.error('Error restoring from recycle bin:', error);
-    throw error;
+    console.error('Error restoring file from recycle bin:', error);
+    return false;
   }
 };
 
-// Permanently delete item from recycle bin
-export const permanentlyDeleteFromRecycleBin = async (path: string): Promise<void> => {
+export const deleteFromRecycleBin = async (item: RecycleBinItem): Promise<boolean> => {
   try {
-    const metadataPath = `${path}.meta`;
-    
-    // Delete both the file and its metadata
-    await FileSystem.deleteAsync(path);
-    await FileSystem.deleteAsync(metadataPath);
+    // Delete the actual file
+    await RNFS.unlink(item.recyclePath);
+
+    // Remove item from metadata
+    const items = await getRecycleBinItems();
+    const updatedItems = items.filter(i => i.id !== item.id);
+    await AsyncStorage.setItem(RECYCLE_BIN_KEY, JSON.stringify(updatedItems));
+
+    return true;
   } catch (error) {
-    console.error('Error permanently deleting from recycle bin:', error);
-    throw error;
+    console.error('Error deleting file from recycle bin:', error);
+    return false;
+  }
+};
+
+export const emptyRecycleBin = async (): Promise<boolean> => {
+  try {
+    const items = await getRecycleBinItems();
+    
+    // Delete all files
+    await Promise.all(items.map(item => RNFS.unlink(item.recyclePath)));
+    
+    // Clear metadata
+    await AsyncStorage.setItem(RECYCLE_BIN_KEY, JSON.stringify([]));
+    
+    return true;
+  } catch (error) {
+    console.error('Error emptying recycle bin:', error);
+    return false;
   }
 }; 

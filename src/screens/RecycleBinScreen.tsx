@@ -3,7 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, Dimensions }
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { getRecycleBinItems, restoreFromRecycleBin, permanentlyDeleteFromRecycleBin } from '../utils/RecycleBin';
+import { getRecycleBinItems, restoreFromRecycleBin, deleteFromRecycleBin, emptyRecycleBin } from '../utils/RecycleBin';
 import { formatBytesToGB } from '../utils/FileManagement';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -36,88 +36,96 @@ const RecycleBinScreen = () => {
   }, []);
 
   const loadItems = async () => {
-    try {
-      const recycleBinItems = await getRecycleBinItems();
-      setItems(recycleBinItems);
-    } catch (error: any) {
-      Alert.alert('Error', `Failed to load recycle bin items: ${error.message}`);
-    }
+    const recycleBinItems = await getRecycleBinItems();
+    setItems(recycleBinItems.sort((a, b) => 
+      new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime()
+    ));
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const day = date.getDate();
+    const month = date.toLocaleString('default', { month: 'short' });
+    const year = date.getFullYear();
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${day} ${month} ${year} ${hours}:${minutes}`;
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
   const handleRestore = async (item: RecycleBinItem) => {
-    try {
-      await restoreFromRecycleBin(item.path);
-      await loadItems();
-      Alert.alert('Success', 'Item restored successfully');
-    } catch (error: any) {
-      Alert.alert('Error', `Failed to restore item: ${error.message}`);
-    }
-  };
-
-  const handleDelete = async (item: RecycleBinItem) => {
     Alert.alert(
-      'Confirm Delete',
-      'Are you sure you want to permanently delete this item? This action cannot be undone.',
+      'Restore File',
+      `Do you want to restore "${item.name}" to its original location?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
-          style: 'destructive',
+          text: 'Restore',
           onPress: async () => {
-            try {
-              await permanentlyDeleteFromRecycleBin(item.path);
+            const success = await restoreFromRecycleBin(item.path);
+            if (success) {
               await loadItems();
-            } catch (error: any) {
-              Alert.alert('Error', `Failed to delete item: ${error.message}`);
+            } else {
+              Alert.alert('Error', 'Failed to restore file');
             }
-          },
-        },
+          }
+        }
       ]
     );
   };
 
-  const handleRestoreSelected = async () => {
-    try {
-      const selectedPaths = items
-        .filter(item => selectedItems.includes(item.path))
-        .map(item => item.path);
-
-      for (const path of selectedPaths) {
-        await restoreFromRecycleBin(path);
-      }
-      await loadItems();
-      setSelectedItems([]);
-      Alert.alert('Success', 'Selected items restored successfully');
-    } catch (error: any) {
-      Alert.alert('Error', `Failed to restore items: ${error.message}`);
-    }
-  };
-
-  const handleDeleteSelected = async () => {
+  const handleDelete = async (item: RecycleBinItem) => {
     Alert.alert(
-      'Confirm Delete',
-      'Are you sure you want to permanently delete the selected items? This action cannot be undone.',
+      'Delete Permanently',
+      `Are you sure you want to permanently delete "${item.name}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            try {
-              const selectedPaths = items
-                .filter(item => selectedItems.includes(item.path))
-                .map(item => item.path);
-
-              for (const path of selectedPaths) {
-                await permanentlyDeleteFromRecycleBin(path);
-              }
+            const success = await deleteFromRecycleBin(item);
+            if (success) {
               await loadItems();
-              setSelectedItems([]);
-            } catch (error: any) {
-              Alert.alert('Error', `Failed to delete items: ${error.message}`);
+            } else {
+              Alert.alert('Error', 'Failed to delete file');
             }
-          },
-        },
+          }
+        }
+      ]
+    );
+  };
+
+  const handleEmptyBin = () => {
+    if (items.length === 0) {
+      Alert.alert('Recycle Bin Empty', 'There are no items to delete.');
+      return;
+    }
+
+    Alert.alert(
+      'Empty Recycle Bin',
+      'Are you sure you want to permanently delete all items?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Empty',
+          style: 'destructive',
+          onPress: async () => {
+            const success = await emptyRecycleBin();
+            if (success) {
+              await loadItems();
+            } else {
+              Alert.alert('Error', 'Failed to empty recycle bin');
+            }
+          }
+        }
       ]
     );
   };
@@ -152,13 +160,13 @@ const RecycleBinScreen = () => {
           <View style={styles.itemDetail}>
             <MaterialIcons name="access-time" size={14} color="#666" />
             <Text style={styles.itemDetails}>
-              {new Date(item.deletedAt).toLocaleString()}
+              {formatDate(item.deletedAt.toString())}
             </Text>
           </View>
           {item.size !== undefined && (
             <View style={styles.itemDetail}>
               <MaterialIcons name="storage" size={14} color="#666" />
-              <Text style={styles.itemDetails}>{formatBytesToGB(item.size)}</Text>
+              <Text style={styles.itemDetails}>{formatFileSize(item.size)}</Text>
             </View>
           )}
         </View>
@@ -200,15 +208,9 @@ const RecycleBinScreen = () => {
           <View style={styles.headerActions}>
             <TouchableOpacity
               style={styles.headerActionButton}
-              onPress={handleRestoreSelected}
+              onPress={handleEmptyBin}
             >
-              <MaterialIcons name="restore" size={24} color="#B5E61D" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.headerActionButton}
-              onPress={handleDeleteSelected}
-            >
-              <MaterialIcons name="delete-forever" size={24} color="#F67280" />
+              <MaterialIcons name="delete-sweep" size={24} color="#F67280" />
             </TouchableOpacity>
           </View>
         )}

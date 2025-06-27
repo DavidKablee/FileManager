@@ -1,122 +1,59 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Dimensions, Image, PermissionsAndroid, Platform, Modal, TextInput } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Dimensions, Image, Platform, Modal, Share } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { readDirectory } from '../utils/FileManagement';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { FileItem } from '../utils/FileManagement';
-import * as RNFS from 'react-native-fs';
+import * as MediaLibrary from 'expo-media-library';
+import ImageView from 'react-native-image-viewing';
+import * as Sharing from 'expo-sharing';
 
-type SortOption = 'name' | 'date' | 'size';
+type RootStackParamList = {
+  Home: undefined;
+  RecycleBin: undefined;
+  ImageGallery: undefined;
+};
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+const { width } = Dimensions.get('window');
+const COLUMN_COUNT = 4;
+const SPACING = 1;
+const ITEM_WIDTH = (width - (COLUMN_COUNT + 1) * SPACING) / COLUMN_COUNT;
 
 const ImageGallery = () => {
   const [files, setFiles] = useState<FileItem[]>([]);
-  const [sortBy, setSortBy] = useState<SortOption>('date');
-  const [sortAscending, setSortAscending] = useState(false);
-  const [showSortMenu, setShowSortMenu] = useState(false);
-  const [showNewFolderModal, setShowNewFolderModal] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
-  const navigation = useNavigation();
+  const [selectedImageIndex, setSelectedImageIndex] = useState(-1);
+  const [isImageViewVisible, setIsImageViewVisible] = useState(false);
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
+  const navigation = useNavigation<NavigationProp>();
 
   const loadImages = async () => {
     try {
-      if (Platform.OS === 'android') {
-        const permission = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
-          {
-            title: "Storage Permission",
-            message: "App needs access to your storage to show images",
-            buttonNeutral: "Ask Me Later",
-            buttonNegative: "Cancel",
-            buttonPositive: "OK"
-          }
-        );
-        if (permission !== 'granted') {
-          console.error('Storage permission denied');
-          return;
-        }
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        console.error('Media Library permission denied');
+        return;
       }
 
-      // Get all files from common image directories
-      const directories = [
-        RNFS.ExternalStorageDirectoryPath + '/DCIM/Camera',
-        RNFS.ExternalStorageDirectoryPath + '/DCIM',
-        RNFS.ExternalStorageDirectoryPath + '/Pictures',
-        RNFS.ExternalStorageDirectoryPath + '/Download',
-        RNFS.ExternalStorageDirectoryPath + '/WhatsApp/Media/WhatsApp Images',
-        RNFS.ExternalStorageDirectoryPath + '/Telegram/Telegram Images',
-        RNFS.ExternalStorageDirectoryPath + '/Screenshots',
-        RNFS.ExternalStorageDirectoryPath
-      ];
-
-      let allFiles: FileItem[] = [];
-      
-      for (const dir of directories) {
-        try {
-          const items = await RNFS.readDir(dir);
-          const imageFiles = items.filter(item => {
-            const ext = item.name.toLowerCase().split('.').pop();
-            return ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '');
-          }).map(item => ({
-            name: item.name,
-            path: item.path,
-            isDirectory: item.isDirectory(),
-            size: item.size,
-            modifiedTime: new Date(item.mtime || Date.now()).toISOString()
-          }));
-          allFiles = [...allFiles, ...imageFiles];
-
-          // Also check subdirectories
-          for (const item of items) {
-            if (item.isDirectory()) {
-              try {
-                const subItems = await RNFS.readDir(item.path);
-                const subImageFiles = subItems.filter(subItem => {
-                  const ext = subItem.name.toLowerCase().split('.').pop();
-                  return ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '');
-                }).map(subItem => ({
-                  name: subItem.name,
-                  path: subItem.path,
-                  isDirectory: subItem.isDirectory(),
-                  size: subItem.size,
-                  modifiedTime: new Date(subItem.mtime || Date.now()).toISOString()
-                }));
-                allFiles = [...allFiles, ...subImageFiles];
-              } catch (error) {
-                console.warn(`Error reading subdirectory ${item.path}:`, error);
-              }
-            }
-          }
-        } catch (error) {
-          console.warn(`Error reading directory ${dir}:`, error);
-        }
-      }
-
-      // Enhanced deduplication using multiple attributes
-      const seenFiles = new Map<string, FileItem>();
-      allFiles.forEach(file => {
-        // Create a unique key using file name and size
-        const fileName = file.name.toLowerCase();
-        const key = `${fileName}-${file.size}`;
-        
-        if (!seenFiles.has(key)) {
-          // If we haven't seen this file before, add it
-          seenFiles.set(key, file);
-        } else {
-          // If we have seen it, keep the one with the most recent modification time
-          const existingFile = seenFiles.get(key)!;
-          const existingTime = new Date(existingFile.modifiedTime).getTime();
-          const newTime = new Date(file.modifiedTime).getTime();
-          
-          if (newTime > existingTime) {
-            seenFiles.set(key, file);
-          }
-        }
+      const media = await MediaLibrary.getAssetsAsync({
+        mediaType: ['photo'],
+        first: 10000,
+        sortBy: [MediaLibrary.SortBy.creationTime],
       });
 
-      // Convert Map back to array and sort
-      const uniqueFiles = Array.from(seenFiles.values());
-      const sortedFiles = sortFiles(uniqueFiles, sortBy, sortAscending);
-      setFiles(sortedFiles);
+      const imageFiles: FileItem[] = media.assets.map(asset => ({
+        name: asset.filename,
+        path: asset.uri.replace('file://', ''),
+        size: asset.width * asset.height,
+        modifiedTime: new Date(asset.creationTime * 1000).toISOString(),
+        isDirectory: false,
+        type: 'image'
+      }));
+
+      setFiles(imageFiles);
     } catch (error) {
       console.error('Error loading images:', error);
     }
@@ -126,170 +63,156 @@ const ImageGallery = () => {
     loadImages();
   }, []);
 
-  const sortFiles = (filesToSort: FileItem[], option: SortOption, ascending: boolean) => {
-    return [...filesToSort].sort((a, b) => {
-      let comparison = 0;
-      if (option === 'name') {
-        comparison = a.name.localeCompare(b.name);
-      } else if (option === 'date') {
-        comparison = new Date(a.modifiedTime).getTime() - new Date(b.modifiedTime).getTime();
-      } else {
-        comparison = a.size - b.size;
+  const toggleItemSelection = (path: string) => {
+    if (selectedItems.includes(path)) {
+      setSelectedItems(prev => prev.filter(p => p !== path));
+      if (selectedItems.length === 1) {
+        setIsSelectionMode(false);
       }
-      return ascending ? comparison : -comparison;
-    });
-  };
-
-  const handleSort = (option: SortOption) => {
-    setSortBy(option);
-    setShowSortMenu(false);
-    const sorted = sortFiles(files, option, sortAscending);
-    setFiles(sorted);
-  };
-
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return;
-
-    try {
-      const currentPath = RNFS.ExternalStorageDirectoryPath + '/DCIM';
-      const newFolderPath = `${currentPath}/${newFolderName}`;
-      
-      await RNFS.mkdir(newFolderPath);
-      setShowNewFolderModal(false);
-      setNewFolderName('');
-      loadImages(); // Refresh the list
-    } catch (error) {
-      console.error('Error creating folder:', error);
+    } else {
+      setSelectedItems(prev => [...prev, path]);
     }
   };
 
-  const renderSortMenu = () => (
-    <Modal
-      visible={showSortMenu}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setShowSortMenu(false)}
-    >
-      <TouchableOpacity 
-        style={styles.modalOverlay}
-        activeOpacity={1} 
-        onPress={() => setShowSortMenu(false)}
-      >
-        <View style={styles.sortMenu}>
-          <TouchableOpacity 
-            style={styles.sortOption} 
-            onPress={() => handleSort('name')}
-          >
-            <MaterialIcons name="sort-by-alpha" size={24} color="white" />
-            <Text style={styles.sortOptionText}>Name</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.sortOption} 
-            onPress={() => handleSort('date')}
-          >
-            <MaterialIcons name="access-time" size={24} color="white" />
-            <Text style={styles.sortOptionText}>Date</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.sortOption} 
-            onPress={() => handleSort('size')}
-          >
-            <MaterialIcons name="sort" size={24} color="white" />
-            <Text style={styles.sortOptionText}>Size</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.sortOption} 
-            onPress={() => {
-              setSortAscending(!sortAscending);
-              const sorted = sortFiles(files, sortBy, !sortAscending);
-              setFiles(sorted);
-            }}
-          >
-            <MaterialIcons 
-              name={sortAscending ? "arrow-upward" : "arrow-downward"} 
-              size={24} 
-              color="white" 
-            />
-            <Text style={styles.sortOptionText}>
-              {sortAscending ? "Ascending" : "Descending"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </TouchableOpacity>
-    </Modal>
-  );
+  const handleImagePress = (index: number) => {
+    if (isSelectionMode) {
+      toggleItemSelection(files[index].path);
+    } else {
+      setSelectedImageIndex(index);
+      setIsImageViewVisible(true);
+    }
+  };
 
-  const renderNewFolderModal = () => (
-    <Modal
-      visible={showNewFolderModal}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setShowNewFolderModal(false)}
-    >
-      <TouchableOpacity 
-        style={styles.modalOverlay}
-        activeOpacity={1} 
-        onPress={() => setShowNewFolderModal(false)}
-      >
-        <View style={styles.newFolderModal}>
-          <Text style={styles.modalTitle}>Create New Folder</Text>
-          <TextInput
-            style={styles.folderNameInput}
-            placeholder="Folder name"
-            placeholderTextColor="#666"
-            value={newFolderName}
-            onChangeText={setNewFolderName}
-            autoFocus
-          />
-          <View style={styles.modalButtons}>
-            <TouchableOpacity 
-              style={[styles.modalButton, styles.cancelButton]}
-              onPress={() => {
-                setShowNewFolderModal(false);
-                setNewFolderName('');
-              }}
-            >
-              <Text style={styles.buttonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.modalButton, styles.createButton]}
-              onPress={handleCreateFolder}
-            >
-              <Text style={styles.buttonText}>Create</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </TouchableOpacity>
-    </Modal>
-  );
+  const handleImageLongPress = (path: string) => {
+    if (!isSelectionMode) {
+      setIsSelectionMode(true);
+    }
+    toggleItemSelection(path);
+  };
+
+  const handleMenuPress = () => {
+    setIsMenuVisible(true);
+  };
+
+  const handleEditPress = () => {
+    setIsMenuVisible(false);
+    setIsSelectionMode(true);
+  };
+
+  const handleRecycleBinPress = () => {
+    setIsMenuVisible(false);
+    navigation.navigate('RecycleBin');
+  };
+
+  const handleShare = async () => {
+    try {
+      if (selectedItems.length === 0) return;
+
+      if (Platform.OS === 'android') {
+        // For Android, we can share multiple files
+        const isAvailable = await Sharing.isAvailableAsync();
+        
+        if (isAvailable) {
+          const filesToShare = selectedItems.map(path => `file://${path}`);
+          await Sharing.shareAsync(filesToShare[0], {
+            dialogTitle: 'Share Images',
+            mimeType: 'image/*',
+            UTI: 'public.image'
+          });
+        }
+      } else {
+        // For iOS, we'll use the Share API
+        await Share.share({
+          url: `file://${selectedItems[0]}`,
+          message: selectedItems.length > 1 ? `Sharing ${selectedItems.length} images` : undefined
+        });
+      }
+    } catch (error) {
+      console.error('Error sharing files:', error);
+    }
+  };
 
   const renderHeader = () => (
     <View style={styles.header}>
-      <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-        <MaterialIcons name="arrow-back" size={24} color="white" />
+      <TouchableOpacity onPress={() => {
+        if (isSelectionMode) {
+          setIsSelectionMode(false);
+          setSelectedItems([]);
+        } else {
+          navigation.goBack();
+        }
+      }} style={styles.backButton}>
+        <MaterialIcons name={isSelectionMode ? "close" : "arrow-back"} size={24} color="white" />
       </TouchableOpacity>
       <View style={styles.titleContainer}>
-        <Text style={styles.title}>Images</Text>
-        <Text style={styles.subtitle}>{files.length} items</Text>
+        <Text style={styles.title}>
+          {isSelectionMode ? `${selectedItems.length} selected` : 'Images'}
+        </Text>
       </View>
       <View style={styles.headerRight}>
-        <TouchableOpacity 
-          style={styles.iconButton}
-          onPress={() => setShowNewFolderModal(true)}
-        >
-          <MaterialIcons name="create-new-folder" size={24} color="white" />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.iconButton}>
-          <MaterialIcons name="search" size={24} color="white" />
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.iconButton}
-          onPress={() => setShowSortMenu(true)}
-        >
-          <MaterialIcons name="more-vert" size={24} color="white" />
-        </TouchableOpacity>
+        {isSelectionMode ? (
+          <>
+            <TouchableOpacity style={styles.iconButton} onPress={handleShare}>
+              <MaterialIcons name="share" size={24} color="white" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconButton}>
+              <MaterialIcons name="delete" size={24} color="white" />
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity style={styles.iconButton} onPress={handleMenuPress}>
+            <MaterialIcons name="more-vert" size={24} color="white" />
+          </TouchableOpacity>
+        )}
       </View>
     </View>
+  );
+
+  const renderImage = ({ item, index }: { item: FileItem; index: number }) => (
+    <TouchableOpacity
+      onPress={() => handleImagePress(index)}
+      onLongPress={() => handleImageLongPress(item.path)}
+      style={styles.imageContainer}
+    >
+      <Image
+        source={{ uri: `file://${item.path}` }}
+        style={[
+          styles.image,
+          selectedItems.includes(item.path) && styles.selectedImage
+        ]}
+        resizeMode="cover"
+      />
+      {selectedItems.includes(item.path) && (
+        <View style={styles.checkmarkContainer}>
+          <MaterialIcons name="check-circle" size={24} color="#B5E61D" />
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+
+  const renderMenu = () => (
+    <Modal
+      visible={isMenuVisible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={() => setIsMenuVisible(false)}
+    >
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        onPress={() => setIsMenuVisible(false)}
+      >
+        <View style={styles.menuContainer}>
+          <TouchableOpacity style={styles.menuItem} onPress={handleEditPress}>
+            <MaterialIcons name="edit" size={24} color="white" />
+            <Text style={styles.menuText}>Edit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={handleRecycleBinPress}>
+            <MaterialIcons name="delete" size={24} color="white" />
+            <Text style={styles.menuText}>Recycle Bin</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
   );
 
   return (
@@ -297,28 +220,19 @@ const ImageGallery = () => {
       {renderHeader()}
       <FlatList
         data={files}
-        numColumns={5}
-        renderItem={({ item }) => (
-          <TouchableOpacity 
-            style={styles.imageContainer}
-            onPress={() => {
-              // Handle image tap
-              console.log('Opening image:', item.path);
-            }}
-          >
-            <Image
-              source={{ uri: `file://${item.path}` }}
-              style={styles.image}
-              resizeMode="cover"
-            />
-          </TouchableOpacity>
-        )}
+        renderItem={renderImage}
         keyExtractor={item => item.path}
+        numColumns={COLUMN_COUNT}
         contentContainerStyle={styles.gridContainer}
         showsVerticalScrollIndicator={false}
       />
-      {renderSortMenu()}
-      {renderNewFolderModal()}
+      <ImageView
+        images={files.map(file => ({ uri: `file://${file.path}` }))}
+        imageIndex={selectedImageIndex}
+        visible={isImageViewVisible}
+        onRequestClose={() => setIsImageViewVisible(false)}
+      />
+      {renderMenu()}
     </View>
   );
 };
@@ -345,10 +259,6 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold'
   },
-  subtitle: {
-    color: '#888888',
-    fontSize: 14
-  },
   headerRight: {
     flexDirection: 'row'
   },
@@ -356,84 +266,52 @@ const styles = StyleSheet.create({
     marginLeft: 16
   },
   gridContainer: {
-    padding: 0.5,
+    padding: SPACING
   },
   imageContainer: {
-    flex: 1/5,
-    aspectRatio: 1,
-    padding: 0.5,
+    width: ITEM_WIDTH,
+    height: ITEM_WIDTH,
+    margin: SPACING / 2,
+    position: 'relative'
   },
   image: {
-    flex: 1,
-    borderRadius: 4,
-    backgroundColor: '#2c2c2c',
+    width: '100%',
+    height: '100%',
+    borderRadius: 4
+  },
+  selectedImage: {
+    opacity: 0.7,
+    borderWidth: 2,
+    borderColor: '#B5E61D'
+  },
+  checkmarkContainer: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 12
   },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end'
   },
-  sortMenu: {
-    backgroundColor: '#1e1e1e',
+  menuContainer: {
+    backgroundColor: '#1a1a1a',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     padding: 16
   },
-  sortOption: {
+  menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16
+    paddingVertical: 12
   },
-  sortOptionText: {
+  menuText: {
     color: 'white',
     fontSize: 16,
     marginLeft: 16
-  },
-  newFolderModal: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 16,
-    padding: 20,
-    width: '80%',
-    alignSelf: 'center',
-    marginTop: '50%',
-  },
-  modalTitle: {
-    color: 'white',
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 16,
-  },
-  folderNameInput: {
-    backgroundColor: '#333',
-    borderRadius: 8,
-    padding: 12,
-    color: 'white',
-    fontSize: 16,
-    marginBottom: 16,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-  },
-  modalButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    minWidth: 80,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#333',
-  },
-  createButton: {
-    backgroundColor: '#007AFF',
-  },
-  buttonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '500',
-  },
+  }
 });
 
-export default ImageGallery; 
+export default ImageGallery;
