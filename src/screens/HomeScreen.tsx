@@ -15,6 +15,12 @@ type RootStackParamList = {
   Home: undefined;
   FileExplorer: { initialPath: string; title: string };
   RecycleBin: undefined;
+  VideoGallery: undefined;
+  AudioGallery: undefined;
+  DocumentGallery: undefined;
+  DownloadsGallery: undefined;
+  ApkGallery: undefined;
+  SearchScreen: undefined;
 };
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -220,6 +226,12 @@ const HomeScreen = () => {
         setPermissionsGranted(true);
       }
 
+      // Special case for Videos category
+      if (title === 'Videos') {
+        navigation.navigate('VideoGallery');
+        return;
+      }
+
       // Check if path is accessible
       const isAccessible = await isPathAccessible(path);
       if (!isAccessible) {
@@ -247,69 +259,40 @@ const HomeScreen = () => {
       });
     } catch (error) {
       console.error('Error accessing directory:', error);
-      
-      // Check if it's a permission error
-      const fullAccess = await hasFullFileAccess();
-      if (!fullAccess) {
-        showFullAccessInstructions();
-      } else {
-        Alert.alert(
-          'Error',
-          `Unable to access ${title}. This location may be restricted or not exist on your device.`,
-          [{ text: 'OK' }]
-        );
-      }
+      Alert.alert('Error', 'Could not access the selected directory.');
     }
   };
 
-  const CATEGORY_DATA = [
+  const CATEGORIES = [
     {
-      icon: <View><MaterialIcons name="image" size={28} color="#6EC1E4" /></View>, 
+      icon: <MaterialIcons name="image" size={24} color="#4CAF50" />,
       label: 'Images',
-      onPress: () => handleCategoryPress(
-        Platform.OS === 'android' ? '/storage/emulated/0/DCIM' : FileSystem.documentDirectory + '/Pictures',
-        'Images'
-      ),
+      onPress: () => handleCategoryPress('/storage/emulated/0/DCIM', 'Images'),
     },
     {
-      icon: <View><MaterialIcons name="videocam" size={28} color="#A084E8" /></View>, 
+      icon: <MaterialIcons name="videocam" size={24} color="#F44336" />,
       label: 'Videos',
-      onPress: () => handleCategoryPress(
-        Platform.OS === 'android' ? '/storage/emulated/0/Movies' : FileSystem.documentDirectory + '/Videos',
-        'Videos'
-      ),
+      onPress: () => navigation.navigate('VideoGallery'),
     },
     {
-      icon: <View><MaterialIcons name="music-note" size={28} color="#F67280" /></View>, 
-      label: 'Audio files',
-      onPress: () => handleCategoryPress(
-        Platform.OS === 'android' ? '/storage/emulated/0/Music' : FileSystem.documentDirectory + '/Music',
-        'Audio files'
-      ),
+      icon: <MaterialIcons name="audiotrack" size={24} color="#2196F3" />,
+      label: 'Audio',
+      onPress: () => navigation.navigate('AudioGallery'),
     },
     {
-      icon: <View><MaterialIcons name="description" size={28} color="#B5E61D" /></View>, 
+      icon: <MaterialIcons name="description" size={24} color="#FFC107" />,
       label: 'Documents',
-      onPress: () => handleCategoryPress(
-        Platform.OS === 'android' ? '/storage/emulated/0/Documents' : FileSystem.documentDirectory + '/Documents',
-        'Documents'
-      ),
+      onPress: () => navigation.navigate('DocumentGallery'),
     },
     {
-      icon: <View><MaterialIcons name="file-download" size={28} color="#00B8A9" /></View>, 
+      icon: <MaterialIcons name="archive" size={24} color="#9C27B0" />,
       label: 'Downloads',
-      onPress: () => handleCategoryPress(
-        Platform.OS === 'android' ? '/storage/emulated/0/Download' : FileSystem.documentDirectory + '/Downloads',
-        'Downloads'
-      ),
+      onPress: () => navigation.navigate('DownloadsGallery'),
     },
     {
-      icon: <View><MaterialCommunityIcons name="android" size={28} color="#B388FF" /></View>, 
-      label: 'APK\nInstallation files',
-      onPress: () => handleCategoryPress(
-        Platform.OS === 'android' ? '/storage/emulated/0/Download' : (FileSystem.documentDirectory || ''),
-        'APK Files'
-      ),
+      icon: <MaterialIcons name="android" size={24} color="#4CAF50" />,
+      label: 'APK',
+      onPress: () => navigation.navigate('ApkGallery'),
     },
   ];
 
@@ -545,7 +528,7 @@ const HomeScreen = () => {
 
         {/* Categories grid */}
         <View style={styles.categoriesSection}>
-          {CATEGORY_DATA.map((item, idx) => (
+          {CATEGORIES.map((item, idx) => (
             <TouchableOpacity key={idx} style={styles.categoryBtn} onPress={item.onPress}>
               {item.icon}
               <Text style={styles.categoryLabel}>{item.label}</Text>
@@ -600,6 +583,18 @@ const HomeScreen = () => {
               <Text style={styles.emptyText}>No recent files</Text>
             </View>
           )}
+        </View>
+
+        <View style={styles.headerRight}>
+          <TouchableOpacity 
+            style={styles.iconButton}
+            onPress={() => navigation.navigate('SearchScreen')}
+          >
+            <MaterialIcons name="search" size={24} color="white" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.iconButton}>
+            <MaterialIcons name="more-vert" size={24} color="white" />
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -853,6 +848,14 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  iconButton: {
+    padding: 8,
   },
 });
 

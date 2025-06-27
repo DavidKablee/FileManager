@@ -7,6 +7,13 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import FileExplorer from './src/screens/FileExplorer';
 import HomeScreen from './src/screens/HomeScreen';
 import RecycleBinScreen from './src/screens/RecycleBinScreen';
+import VideoGallery from './src/screens/VideoGallery';
+import AudioGallery from './src/screens/AudioGallery';
+import DocumentGallery from './src/screens/DocumentGallery';
+import DownloadsGallery from './src/screens/DownloadsGallery';
+import ImageGallery from './src/screens/ImageGallery';
+import ApkGallery from './src/screens/ApkGallery';
+import SearchScreen from './src/screens/SearchScreen';
 import { ThemeProvider } from './src/utils/ThemeContext';
 import { useEffect } from 'react';
 import * as MediaLibrary from 'expo-media-library';
@@ -142,6 +149,13 @@ const App = () => {
             <Stack.Screen name="Home" component={HomeScreen} />
             <Stack.Screen name="FileExplorer" component={FileExplorer} />
             <Stack.Screen name="RecycleBin" component={RecycleBinScreen} />
+            <Stack.Screen name="VideoGallery" component={VideoGallery} />
+            <Stack.Screen name="AudioGallery" component={AudioGallery} />
+            <Stack.Screen name="DocumentGallery" component={DocumentGallery} />
+            <Stack.Screen name="DownloadsGallery" component={DownloadsGallery} />
+            <Stack.Screen name="ImageGallery" component={ImageGallery} options={{ headerShown: false }} />
+            <Stack.Screen name="ApkGallery" component={ApkGallery} options={{ headerShown: false }} />
+            <Stack.Screen name="SearchScreen" component={SearchScreen} options={{ headerShown: false }} />
           </Stack.Navigator>
         </NavigationContainer>
       </ThemeProvider>
